@@ -227,7 +227,7 @@ class ApiContract(Base):
         self.check(json.loads(self.get("/api/speedtests?days=30")), SCHEMAS["/api/speedtests?days=30"], "speedtests")
         self.assertIn(b"Internet connection report", self.get("/report?days=1"))
         self.assertTrue(self.get("/api/report.csv?days=1").startswith(b"record_type,timestamp,end_time,isp,wan"))
-        self.assertIn(b"<title>NetPulse</title>", self.get("/"))
+        self.assertIn(b"<title>WANCompass</title>", self.get("/"))
         system = json.loads(self.get("/api/system"))
         self.check(system, SCHEMAS["/api/system"], "system")
         self.assertFalse(system["enabled"])

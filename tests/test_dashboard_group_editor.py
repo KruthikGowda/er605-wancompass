@@ -91,8 +91,8 @@ assert.equal(fetchCalls, 0);
         harness = r"""
 const assert = require('node:assert/strict');
 const source = JSON.parse(process.argv[1]);
-const element = {textContent: ''};
-const $ = id => { assert.equal(id, 'alert-policy'); return element; };
+const elements = {'alert-policy': {textContent: ''}, 'alert-policy-summary': {textContent: ''}};
+const $ = id => { assert.ok(elements[id], `unexpected dashboard element: ${id}`); return elements[id]; };
 const renderPolicy = new Function('$', 's', source);
 const base = {alert_policy: {
   telegram_enabled: true, quiet_start: '22:00', quiet_end: '07:00',
@@ -102,16 +102,18 @@ const base = {alert_policy: {
     categories: {device_notice: {accepted: 0, queued: 0, failed: 0, queue_dropped: 0}}}
 }};
 renderPolicy($, {alert_policy: {...base.alert_policy, device_activity_notifications: false}});
-assert.match(element.textContent, /Device activity alerts off; details available on request/);
-assert.doesNotMatch(element.textContent, /Device notices:/);
-assert.doesNotMatch(element.textContent, /0 accepted by Telegram/);
-assert.match(element.textContent, /Telegram API accepted 2 recipient message\(s\)/,
+assert.match(elements['alert-policy'].textContent, /Device activity alerts off; details available on request/);
+assert.doesNotMatch(elements['alert-policy'].textContent, /Device notices:/);
+assert.doesNotMatch(elements['alert-policy'].textContent, /0 accepted by Telegram/);
+assert.match(elements['alert-policy'].textContent, /Telegram API accepted 2 recipient message\(s\)/,
   'general alert delivery remains visible');
+assert.match(elements['alert-policy-summary'].textContent, /Quiet hours do not suppress WAN outage and recovery alerts/);
 
-renderPolicy($, {alert_policy: {...base.alert_policy, device_activity_notifications: true,
+renderPolicy($, {alert_policy: {...base.alert_policy, telegram_enabled: false, device_activity_notifications: true,
   delivery_since_start: {...base.alert_policy.delivery_since_start,
     categories: {device_notice: {accepted: 1, queued: 2, failed: 3, queue_dropped: 4}}}}});
-assert.match(element.textContent, /Device notices: 1 accepted by Telegram, 2 queued, 3 failed, 4 dropped/);
+assert.match(elements['alert-policy'].textContent, /Device notices: 1 accepted by Telegram, 2 queued, 3 failed, 4 dropped/);
+assert.match(elements['alert-policy-summary'].textContent, /Telegram alerts are off, including outage and recovery alerts/);
 """
         result = subprocess.run(
             [shutil.which("node") or "node", "-e", harness, json.dumps(policy_source)],
