@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "netpulse" / "web" / "static" / "index.html"
 DEMO_BANNER = (
     '<div role="status" aria-label="Local demo preview" '
-    'style="position:sticky;top:0;z-index:10000;padding:8px 14px;text-align:center;'
+    'style="position:relative;padding:8px 14px;text-align:center;'
     'background:#7c2d12;color:#fff;font:700 14px system-ui;box-shadow:0 2px 8px #0004">'
     'DEMO · LOCAL PREVIEW · synthetic data · read only</div>'
 )
