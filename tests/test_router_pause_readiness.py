@@ -14,28 +14,29 @@ from tools import router_pause_readiness
 from tools.router_pause_readiness import evaluate_candidate, pi_ipv4_addresses
 
 
-MAC = "AA-BB-CC-DD-EE-01"
-LAN = [{"name": "IP_LAN", "scope": "192.168.0.0/24"}]
-CLIENT = [{"name": "Spare test handset", "ipaddr": "192.168.0.135", "macaddr": MAC}]
-RESERVATION = [{"ip": "192.168.0.135", "mac": MAC, "enable": "on"}]
-PI_ADDRESSES = [ipaddress.ip_address("192.168.0.157")]
+# Synthetic RFC1918 LAN: these gates intentionally reject documentation ranges.
+MAC = "02-00-00-00-00-01"
+LAN = [{"name": "IP_LAN", "scope": "10.77.0.0/24"}]
+CLIENT = [{"name": "Spare test handset", "ipaddr": "10.77.0.135", "macaddr": MAC}]
+RESERVATION = [{"ip": "10.77.0.135", "mac": MAC, "enable": "on"}]
+PI_ADDRESSES = [ipaddress.ip_address("10.77.0.157")]
 EMPTY_ACL = {"error_code": "0", "result": {}}
 
 
-def evaluate(candidate="192.168.0.135", lan=LAN, clients=CLIENT, reservations=RESERVATION,
-             pi_addresses=PI_ADDRESSES, acl=EMPTY_ACL, router="192.168.0.1"):
+def evaluate(candidate="10.77.0.135", lan=LAN, clients=CLIENT, reservations=RESERVATION,
+             pi_addresses=PI_ADDRESSES, acl=EMPTY_ACL, router="10.77.0.1"):
     return evaluate_candidate(candidate, lan, clients, reservations, acl_snapshot=acl,
                               pi_addresses=pi_addresses, router_address=router)
 
 
 class SameLanEndpointReadiness(unittest.TestCase):
     def test_selector_accepts_ip_mac_or_exact_case_insensitive_name(self):
-        self.assertEqual(router_pause_readiness.resolve_candidate_ip("192.168.0.135", CLIENT),
-                         "192.168.0.135")
+        self.assertEqual(router_pause_readiness.resolve_candidate_ip("10.77.0.135", CLIENT),
+                         "10.77.0.135")
         self.assertEqual(router_pause_readiness.resolve_candidate_ip(MAC.replace("-", ":"), CLIENT),
-                         "192.168.0.135")
+                         "10.77.0.135")
         self.assertEqual(router_pause_readiness.resolve_candidate_ip("spare test handset", CLIENT),
-                         "192.168.0.135")
+                         "10.77.0.135")
 
     def test_same_lan_candidate_passes_with_unique_lease_and_reservation(self):
         result = evaluate()
@@ -47,8 +48,8 @@ class SameLanEndpointReadiness(unittest.TestCase):
         })
 
     def test_candidate_cannot_be_pi_or_router_address(self):
-        for candidate, field in (("192.168.0.157", "not_pi_address"),
-                                 ("192.168.0.1", "not_router_address")):
+        for candidate, field in (("10.77.0.157", "not_pi_address"),
+                                 ("10.77.0.1", "not_router_address")):
             with self.subTest(candidate=candidate):
                 result = evaluate(candidate=candidate,
                     clients=[dict(CLIENT[0], ipaddr=candidate)],
@@ -59,7 +60,7 @@ class SameLanEndpointReadiness(unittest.TestCase):
                 self.assertFalse(result["subnet_precheck"])
 
     def test_network_broadcast_and_non_host_scope_addresses_fail(self):
-        for candidate in ("192.168.0.0", "192.168.0.255"):
+        for candidate in ("10.77.0.0", "10.77.0.255"):
             with self.subTest(candidate=candidate):
                 result = evaluate(candidate=candidate,
                     clients=[dict(CLIENT[0], ipaddr=candidate)],
@@ -67,17 +68,17 @@ class SameLanEndpointReadiness(unittest.TestCase):
                 self.assertTrue(result["lease_confirmed"])
                 self.assertTrue(result["reservation_confirmed"])
                 self.assertFalse(result["subnet_precheck"])
-        self.assertFalse(evaluate(lan=[{"name": "IP_LAN", "scope": "192.168.0.0/31"}])[
+        self.assertFalse(evaluate(lan=[{"name": "IP_LAN", "scope": "10.77.0.0/31"}])[
             "subnet_precheck"])
 
     def test_duplicate_conflicting_lease_and_reservation_rows_fail(self):
         self.assertFalse(evaluate(clients=CLIENT * 2)["subnet_precheck"])
-        other_ip_same_mac = CLIENT + [{"ipaddr": "192.168.0.136", "macaddr": MAC}]
+        other_ip_same_mac = CLIENT + [{"ipaddr": "10.77.0.136", "macaddr": MAC}]
         self.assertFalse(evaluate(clients=other_ip_same_mac)["subnet_precheck"])
         self.assertFalse(evaluate(reservations=RESERVATION * 2)["subnet_precheck"])
-        conflict = RESERVATION + [{"ip": "192.168.0.135", "mac": "AA-BB-CC-DD-EE-02", "enable": "on"}]
+        conflict = RESERVATION + [{"ip": "10.77.0.135", "mac": "02-00-00-00-00-02", "enable": "on"}]
         self.assertFalse(evaluate(reservations=conflict)["subnet_precheck"])
-        another_ip = RESERVATION + [{"ip": "192.168.0.136", "mac": MAC, "enable": "on"}]
+        another_ip = RESERVATION + [{"ip": "10.77.0.136", "mac": MAC, "enable": "on"}]
         self.assertFalse(evaluate(reservations=another_ip)["subnet_precheck"])
 
     def test_missing_disabled_or_unreadable_evidence_fails_closed(self):
@@ -96,7 +97,7 @@ class SameLanEndpointReadiness(unittest.TestCase):
 
     def test_acl_precheck_fails_closed_for_existing_or_unreadable_rules(self):
         rule = {"name": "Private family rule", "policy": "drop", "zone": "lan",
-                "iptype": "ipv4", "is_src": "ipgroup", "src": "NP_G_AABBCCDDEE01",
+                "iptype": "ipv4", "is_src": "ipgroup", "src": "NP_G_020000000001",
                 "is_dst": "ipgroup", "dest": "IPGROUP_ANY", "service": "ALL", "enable": "on"}
         existing = evaluate(acl=[rule])
         self.assertTrue(existing["subnet_precheck"])
@@ -117,12 +118,12 @@ class SameLanEndpointReadiness(unittest.TestCase):
         addresses = pi_ipv4_addresses('[{"ifname":"lo","addr_info":[{"family":"inet",'
                                       '"local":"127.0.0.1","prefixlen":8,"scope":"host"}]},'
                                       '{"ifname":"eth0","addr_info":[{"family":"inet",'
-                                      '"local":"192.168.0.157","prefixlen":24,"scope":"global"},'
-                                      '{"family":"inet","local":"192.168.0.158",'
+                                      '"local":"10.77.0.157","prefixlen":24,"scope":"global"},'
+                                      '{"family":"inet","local":"10.77.0.158",'
                                       '"prefixlen":24,"scope":"global"},{"family":"inet6",'
                                       '"local":"fe80::1","prefixlen":64,"scope":"link"}]}]')
-        self.assertEqual(addresses, [ipaddress.ip_address("192.168.0.157"),
-                                     ipaddress.ip_address("192.168.0.158")])
+        self.assertEqual(addresses, [ipaddress.ip_address("10.77.0.157"),
+                                     ipaddress.ip_address("10.77.0.158")])
 
     def test_cli_uses_envelope_acl_read_and_does_not_print_candidate_identity(self):
         calls = []
@@ -142,13 +143,13 @@ class SameLanEndpointReadiness(unittest.TestCase):
                 return EMPTY_ACL
 
         cfg = SimpleNamespace(router=SimpleNamespace(
-            enabled=True, host="192.168.0.1", cert_sha256="fingerprint",
+            enabled=True, host="10.77.0.1", cert_sha256="fingerprint",
             credentials_file="credentials.toml"))
         credentials = SimpleNamespace(username="router-user", password="router-password",
                                       cert_sha256="fingerprint")
         output = StringIO()
         ip_json = '[{"ifname":"eth0","addr_info":[{"family":"inet",' \
-                  '"local":"192.168.0.157","prefixlen":24,"scope":"global"}]}]'
+                  '"local":"10.77.0.157","prefixlen":24,"scope":"global"}]}]'
         with (mock.patch.object(router_pause_readiness.os, "geteuid", return_value=0, create=True),
               mock.patch.object(router_pause_readiness, "load", return_value=cfg),
               mock.patch.object(router_pause_readiness, "load_router_credentials", return_value=credentials),
@@ -165,7 +166,7 @@ class SameLanEndpointReadiness(unittest.TestCase):
         self.assertIn("Read-only candidate/ACL precheck: PASS (packet enforcement UNVERIFIED)",
                       output.getvalue())
         self.assertIn("both WAN paths, or IPv6 behavior", output.getvalue())
-        for private in ("192.168.0.135", MAC, "Spare test handset", "router-password"):
+        for private in ("10.77.0.135", MAC, "Spare test handset", "router-password"):
             self.assertNotIn(private, output.getvalue())
 
 
