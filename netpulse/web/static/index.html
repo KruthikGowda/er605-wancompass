@@ -28,7 +28,8 @@
   body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.5 var(--body); }
   main { max-width: 1080px; margin: 0 auto; padding: 20px 20px 48px; }
   button, select { font: inherit; color: inherit; }
-  button { min-height: 44px; }
+  button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); cursor: pointer; }
+  button:disabled { opacity: .55; cursor: not-allowed; }
   :focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; border-radius: 6px; }
   .num { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
   .soft { color: var(--soft); }
@@ -150,7 +151,7 @@
   input[type="checkbox"] { min-height: 18px; width: 18px; height: 18px; flex: none; accent-color: var(--brand); }
   .device-route-control label:has(input[type="checkbox"]), .devices-toolbar label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 8px; min-height: 44px; }
   .device-route-control .group-edit-members, .device-route-control .group-delete { background: transparent; color: var(--ink); border: 1px solid var(--line); }
-  .device-route-control .group-delete { color: var(--down); }
+  .device-route-control .group-delete { color: var(--bad); }
   .device-route-help { color: var(--soft); font-size: 12px; line-height: 1.45; }
   .group-editor { border: 1px solid var(--line); border-radius: 11px; padding: 10px; margin: 10px 0; background: var(--page); }
   .group-editor[hidden] { display: none; }
