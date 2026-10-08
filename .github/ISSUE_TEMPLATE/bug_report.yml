@@ -1,0 +1,39 @@
+name: Bug report
+description: Report a reproducible problem without exposing your network or credentials.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For security vulnerabilities, use private vulnerability reporting instead.
+        Remove bot tokens, passwords, public IPs, real MAC addresses, hostnames, device inventories,
+        and personal details from logs or screenshots before sharing them.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include what you expected and the smallest steps that reproduce the problem.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Project version or commit
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Linux distribution, Python version, and router hardware/firmware. Do not include credentials or addresses.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Include only relevant, sanitized messages. Do not attach databases or router configuration exports.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed credentials and personal network details from this report.
+          required: true

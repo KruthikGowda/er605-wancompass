@@ -13,6 +13,37 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 # Don't leave root-owned __pycache__ folders in the user's copy of the repo.
 export PYTHONDONTWRITEBYTECODE=1
 
+# BEGIN first-install config helpers (kept sourceable for isolated installer tests).
+CONFIG_PATH=/etc/netpulse/config.toml
+CONFIG_SOURCE="${NETPULSE_CONFIG_SOURCE:-$REPO/config.example.toml}"
+
+select_and_validate_config_source() {
+    # Existing installations keep their config and ignore NETPULSE_CONFIG_SOURCE entirely.
+    if [[ -f "$CONFIG_PATH" ]]; then
+        CONFIG_SOURCE=""
+        return 0
+    fi
+    if [[ ! -f "$CONFIG_SOURCE" ]]; then
+        echo "First-install config source is missing or is not a regular file; no install changes were made." >&2
+        return 1
+    fi
+    if ! PYTHONPATH="$REPO" python3 -c 'from netpulse.config import load; import sys; load(sys.argv[1])' \
+        "$CONFIG_SOURCE" >/dev/null 2>&1; then
+        echo "First-install config source is invalid for this NetPulse version; no install changes were made." >&2
+        return 1
+    fi
+}
+
+install_first_config() {
+    if [[ -f "$CONFIG_PATH" ]]; then
+        echo "    kept existing config"
+        return 0
+    fi
+    install -m 640 -o root -g netpulse "$CONFIG_SOURCE" "$CONFIG_PATH"
+    echo "    created from selected config - review it: sudo nano /etc/netpulse/config.toml"
+}
+# END first-install config helpers.
+
 python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11+ required"'
 
 # Regression gate: never install a version that fails its own tests.
@@ -27,6 +58,9 @@ if [[ "${SKIP_TESTS:-0}" != "1" ]]; then
     fi
     grep -E "^Ran [0-9]+ tests" /tmp/netpulse-tests.log | sed 's/^/    /'
 fi
+
+# Validate first-install input before apt, user creation, or changes to installed files.
+select_and_validate_config_source
 
 # A service restart also resumes timed route expiry handling. Check before installing files so an
 # owner can stop cleanly if one or more pinned devices are already due (or due during this upgrade).
@@ -70,14 +104,9 @@ install -d -m 755 /opt/netpulse/tools
 install -m 644 "$REPO/tools/router_acl_pilot.py" "$REPO/tools/router_firewall_discover.py" /opt/netpulse/tools/
 find /opt/netpulse -name __pycache__ -prune -exec rm -rf {} +
 
-echo "==> Config -> /etc/netpulse/config.toml"
+echo "==> Config -> $CONFIG_PATH"
 install -d -m 750 -o root -g netpulse /etc/netpulse
-if [[ ! -f /etc/netpulse/config.toml ]]; then
-    install -m 640 -o root -g netpulse "$REPO/config.example.toml" /etc/netpulse/config.toml
-    echo "    created from example - review it: sudo nano /etc/netpulse/config.toml"
-else
-    echo "    kept existing config"
-fi
+install_first_config
 
 echo "==> Dashboard password"
 AUTH_FILE=$(PYTHONPATH="$REPO" python3 -c 'from netpulse import config; print(config.load("/etc/netpulse/config.toml").web.auth_file)')

@@ -1,0 +1,15 @@
+name: Feature request
+description: Describe a useful change and how you would use it.
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What would this help you do?
+      description: Describe the problem and your preferred behavior, using generic examples.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Constraints or alternatives
+      description: For router controls, include hardware and firmware, expected failure behavior, and recovery needs. Do not include private data.
