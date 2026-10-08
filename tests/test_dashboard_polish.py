@@ -82,7 +82,6 @@ class DashboardPolish(unittest.TestCase):
 
     def test_public_copy_uses_generic_provider_language_and_branding(self):
         self.assertIn("speed tests to share with your Internet provider", self.html)
-        self.assertNotIn("ANT or ONEOTT", self.html)
         self.assertNotIn("NetPulse protects its own Pi connection", self.html)
         self.assertIn("--wan1", self.html)
         self.assertIn("--wan2", self.html)

@@ -13,8 +13,9 @@ from netpulse.router.pause import FIRMWARE, PauseControl
 from netpulse.router.er605 import valid_pause_acl_row
 from netpulse.storage import sqlite
 
-MAC = "AA-BB-CC-DD-EE-01"
-IP = "192.168.0.135"
+# Synthetic RFC1918 LAN: these gates intentionally reject documentation ranges.
+MAC = "02-00-00-00-00-01"
+IP = "10.77.0.135"
 
 
 def rule(mac=MAC):
@@ -28,7 +29,7 @@ def rule(mac=MAC):
 
 
 class FakeClient:
-    host = "192.168.0.1"
+    host = "10.77.0.1"
 
     def __init__(self):
         self.calls = 0
@@ -37,8 +38,8 @@ class FakeClient:
         self.mismatch_add = False
         self.clients = [{"macaddr": MAC, "ipaddr": IP, "hostname": "Test handset"}]
         self.reservations = [{"mac": MAC, "ip": IP, "enable": "on"}]
-        self.ipscopes = [{"name": "NP_I_AABBCCDDEE01", "type": "range", "scope": f"{IP}-{IP}"}]
-        self.ipgroups = [{"name": "NP_G_AABBCCDDEE01", "rule_scope": ["NP_I_AABBCCDDEE01"]}]
+        self.ipscopes = [{"name": "NP_I_020000000001", "type": "range", "scope": f"{IP}-{IP}"}]
+        self.ipgroups = [{"name": "NP_G_020000000001", "rule_scope": ["NP_I_020000000001"]}]
         self.after_add = None
         self.after_delete = None
 
@@ -61,7 +62,7 @@ class FakeClient:
         if (module, form) == ("ipgroup", "ipgroup_reservation"):
             return list(self.ipgroups)
         if (module, form) == ("ipgroup", "ipscope_list"):
-            return [{"name": "IP_LAN", "scope": "192.168.0.0/24"}]
+            return [{"name": "IP_LAN", "scope": "10.77.0.0/24"}]
         raise AssertionError((module, form))
 
     def read_pause_acl_rows(self):
@@ -268,22 +269,22 @@ class PauseControlTests(unittest.TestCase):
         self.assertEqual(self.client.calls, 0)
 
     def test_current_pi_lease_does_not_make_another_household_device_ineligible(self):
-        pi_mac = "AA-BB-CC-DD-EE-99"
+        pi_mac = "02-00-00-00-00-99"
         self.routes.local_device_macs = lambda: {pi_mac}
-        self.client.clients.append({"macaddr": pi_mac, "ipaddr": "192.168.0.157", "hostname": "NetPulse Pi"})
+        self.client.clients.append({"macaddr": pi_mac, "ipaddr": "10.77.0.157", "hostname": "NetPulse Pi"})
         self.assertEqual(self.control.preview(MAC)["ip"], IP)
 
     def test_group_membership_change_rolls_back_completed_pause(self):
-        second = "AA-BB-CC-DD-EE-02"
-        second_ip = "192.168.0.136"
+        second = "02-00-00-00-00-02"
+        second_ip = "10.77.0.136"
         db = sqlite3.connect(self.path)
         db.executescript(sqlite.SCHEMA)
         db.close()
         group = sqlite.save_device_group(self.path, "Family", [MAC, second], int(time.time()))
         self.client.clients.append({"macaddr": second, "ipaddr": second_ip, "hostname": "Second handset"})
         self.client.reservations.append({"mac": second, "ip": second_ip, "enable": "on"})
-        self.client.ipscopes.append({"name": "NP_I_AABBCCDDEE02", "type": "range", "scope": f"{second_ip}-{second_ip}"})
-        self.client.ipgroups.append({"name": "NP_G_AABBCCDDEE02", "rule_scope": ["NP_I_AABBCCDDEE02"]})
+        self.client.ipscopes.append({"name": "NP_I_020000000002", "type": "range", "scope": f"{second_ip}-{second_ip}"})
+        self.client.ipgroups.append({"name": "NP_G_020000000002", "rule_scope": ["NP_I_020000000002"]})
         preview = self.control.preview_group(group["id"], "pause", "owner", 3600)
         self.client.after_add = lambda: sqlite.save_device_group(self.path, "Family", [MAC],
                                                                   int(time.time()), group["id"])
@@ -293,20 +294,20 @@ class PauseControlTests(unittest.TestCase):
         self.assertEqual(self.control.records(), [])
 
     def test_group_resume_rollback_restores_exact_prior_deadline_and_rule(self):
-        second = "AA-BB-CC-DD-EE-02"
-        second_ip = "192.168.0.136"
+        second = "02-00-00-00-00-02"
+        second_ip = "10.77.0.136"
         db = sqlite3.connect(self.path)
         db.executescript(sqlite.SCHEMA)
         db.close()
         group = sqlite.save_device_group(self.path, "Family", [MAC, second], int(time.time()))
         self.client.clients.append({"macaddr": second, "ipaddr": second_ip, "hostname": "Second handset"})
         self.client.reservations.append({"mac": second, "ip": second_ip, "enable": "on"})
-        self.client.ipscopes.append({"name": "NP_I_AABBCCDDEE02", "type": "range", "scope": f"{second_ip}-{second_ip}"})
-        self.client.ipgroups.append({"name": "NP_G_AABBCCDDEE02", "rule_scope": ["NP_I_AABBCCDDEE02"]})
+        self.client.ipscopes.append({"name": "NP_I_020000000002", "type": "range", "scope": f"{second_ip}-{second_ip}"})
+        self.client.ipgroups.append({"name": "NP_G_020000000002", "rule_scope": ["NP_I_020000000002"]})
         pause = self.control.preview_group(group["id"], "pause", "owner", 3600)
         self.control.apply(pause["token"], "owner")
         prior = self.control.store.get(MAC)
-        original_acl = next(r.copy() for r in self.client.acls if r["src"] == "NP_G_AABBCCDDEE01")
+        original_acl = next(r.copy() for r in self.client.acls if r["src"] == "NP_G_020000000001")
 
         resume = self.control.preview_group(group["id"], "resume", "owner")
         self.client.after_delete = lambda: sqlite.save_device_group(self.path, "Family", [MAC],
