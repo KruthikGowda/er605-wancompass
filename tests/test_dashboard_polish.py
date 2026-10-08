@@ -53,7 +53,9 @@ class DashboardPolish(unittest.TestCase):
         self.assertIn("WANCompass", self.html)
         self.assertIn("A clear view of your home internet and local network", self.html)
         self.assertEqual(self.markup.nav_labels, ["Overview", "Devices", "History", "System"])
-        self.assertEqual(set(self.markup.links), {"overview", "devices-heading", "history-heading", "system-heading"})
+        self.assertEqual(set(self.markup.links), {"monitor", "devices-heading", "history-heading", "system-heading"})
+        self.assertIn('<section class="monitor" id="monitor"', self.html)
+        self.assertNotIn('class="anchor-target"', self.html)
         self.assertTrue(set(self.markup.links).issubset(self.markup.ids))
         self.assertIn('aria-label="Dashboard sections"', self.html)
 
