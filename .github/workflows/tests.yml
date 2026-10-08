@@ -1,0 +1,29 @@
+name: Tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install optional validation dependencies
+        run: python -m pip install '.[ha-validation]'
+      - name: Run offline tests
+        env:
+          NETPULSE_LIVE: '0'
+        run: python -B -m unittest discover -s tests -t .
+      - name: Validate Home Assistant example
+        run: python tools/validate_home_assistant.py
+      - name: Audit tracked publication files
+        run: python tools/publication_audit.py

@@ -1,0 +1,23 @@
+{
+  "_about": "Real ER605 v2.30 / firmware 2.3.3 Build 20251029 response shapes, recorded 2026-09-24. MACs and public IPs replaced with documentation values. If a firmware update changes a shape, record a new file next to this one and make the tests pass for both.",
+  "locale": {"id": 1, "result": {"locale": "en_US", "uptime": 350526, "radio": 0, "model": "ER605 v2.30", "region": "UN", "force": false, "model_full_name": "Omada Gigabit VPN Gateway", "multiwan": 1}, "error_code": "0"},
+  "online/online": [
+    {"state": "up", "dns": "1.1.1.1", "t_label": "WAN1", "gateway": "8.8.8.8", "mode": "manual", "index": 1, "interface": "WAN1"},
+    {"state": "up", "dns": "8.8.8.8", "t_label": "WAN/LAN2", "gateway": "1.1.1.1", "mode": "manual", "index": 2, "interface": "WAN2"}
+  ],
+  "interface/status2": {"normal": [
+    {"t_proto": "pppoe", "ipaddr": "10.0.0.2", "dns2": "4.4.4.4", "t_type": "pppoe", "macaddr": "02-00-00-00-00-01", "dns1": "8.8.8.8", "t_label": "WAN1", "netmask": "255.255.255.255", "gateway": "203.0.113.198", "t_name": "WAN1", "t_isup": true, "second_conn": false},
+    {"t_proto": "pppoe", "ipaddr": "100.64.0.2", "dns2": "198.51.100.2", "t_type": "pppoe", "macaddr": "02-00-00-00-00-02", "dns1": "198.51.100.1", "t_label": "WAN/LAN2", "netmask": "255.255.255.255", "gateway": "100.64.0.1", "t_name": "WAN2", "t_isup": true, "second_conn": false},
+    {"t_proto": "static", "ipaddr": "192.168.0.1", "t_type": "physical", "t_linktype": "static", "macaddr": "02-00-00-00-00-03", "t_label": "LAN", "t_isup": true, "netmask": "255.255.255.0", "t_name": "LAN1"}
+  ], "vpn": {}},
+  "sys_status/all_usage": {"cpu_log": {"core1": [0, 0, 1, 1], "core3": [0, 1, 2], "core2": [1, 0, 2, 4], "core4": [0, 1, 4]}, "mem_usage": {"mem": 30}, "cpu_usage": {"core1": 3, "core3": 3, "core2": 4, "core4": 9}},
+  "firmware/upgrade": {"hardware_version": "ER605 v2.30", "firmware_version": "2.3.3 Build 20251029 Rel.18054"},
+  "dhcps/client": [
+    {"leasetime": "1:55:27", "name": "--", "macaddr": "02-00-00-00-10-01", "ipaddr": "192.168.0.101", "interface": "lan"},
+    {"leasetime": "Permanent", "name": "Example NAS", "bind": "1", "macaddr": "02-00-00-00-10-02", "ipaddr": "192.168.0.107", "interface": "lan"},
+    {"leasetime": "1:48:18", "name": "Example sensor", "macaddr": "02-00-00-00-10-03", "ipaddr": "192.168.0.125", "interface": "lan"}
+  ],
+  "dhcps/reservation": [
+    {"id": "4", "ip": "192.168.0.140", "mac": "02-00-00-00-10-04", "note": "Office printer", "enable": "1", "ip_bind": "1", "interface": "LAN1"}
+  ]
+}

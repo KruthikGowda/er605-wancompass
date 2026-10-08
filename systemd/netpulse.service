@@ -1,0 +1,48 @@
+[Unit]
+Description=NetPulse dual-WAN monitor
+Documentation=file:///opt/netpulse/README.md
+Wants=network-online.target netpulse-acl-recovery.service
+After=network-online.target netpulse-acl-recovery.service
+# Give up restarting if it crashes 5 times within 10 minutes (something is really wrong).
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=netpulse
+Group=netpulse
+WorkingDirectory=/opt/netpulse
+Environment=PYTHONPATH=/opt/netpulse
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m netpulse -c /etc/netpulse/config.toml
+Restart=on-failure
+RestartSec=10
+
+# ping needs raw/ICMP sockets. Optional ER605 syslog uses UDP/514, so allow only
+# the additional low-port bind capability when its default-off config is enabled.
+AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_BIND_SERVICE
+
+# Hardening: read-only system, writable state dir only.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+StateDirectory=netpulse
+StateDirectoryMode=0750
+ReadOnlyPaths=/etc/netpulse
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+# Pi 3 has 1 GB RAM: keep us well-behaved.
+MemoryMax=150M
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

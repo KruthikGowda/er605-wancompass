@@ -1,0 +1,35 @@
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+/config.toml
+.venv/
+*.sqlite
+*.sqlite3
+*.log
+.env
+.env.*
+!.env.example
+*.auth
+*.key
+*.p12
+*.pfx
+*.tar
+*.tar.gz
+*.zip
+acl-pilot-devices.json
+release-private/
+
+# Local machine / editor settings
+.claude/settings.local.json
+# Never commit real credentials
+router.toml
+*.pem
+!tests/fixtures/*.pem
+
+# Packaging and local test output
+*.egg-info/
+build/
+dist/
+.pytest_cache/

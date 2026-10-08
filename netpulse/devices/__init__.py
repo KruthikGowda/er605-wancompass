@@ -1,0 +1,1 @@
+"""Home-device inventory helpers."""

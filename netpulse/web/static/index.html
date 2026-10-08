@@ -1,0 +1,1536 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#127A7E">
+<title>NetPulse</title>
+<style>
+  /* Fonts: local system faces only. This page must work when the internet is down. */
+  :root {
+    --page: #EEF4F3; --card: #FFFFFF; --ink: #0F2A2E; --soft: #5B7276; --line: #DCE7E5;
+    --brand: #127A7E; --brand-deep: #0B4F57;
+    --ant: #3E7BE6; --oneott: #E8883A;
+    --good: #1E9E6A; --warn: #C98F0E; --bad: #E2553B; --down: #B42318; --idle: #8FA3A6;
+    --display: "Segoe UI Variable Display", "SF Pro Display", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Consolas, monospace;
+    --radius: 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #0B1C1F; --card: #11282C; --ink: #E4F0EE; --soft: #8FA9AC; --line: #1E3A3F;
+      --brand: #1A9197; --brand-deep: #0A3A40; --ant: #6E9CF0; --oneott: #F0A262;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.5 var(--body); }
+  main { max-width: 980px; margin: 0 auto; padding: 16px 16px 48px; }
+  button, select { font: inherit; color: inherit; }
+  :focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; border-radius: 6px; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .soft { color: var(--soft); }
+
+  /* ---------- Hero: the monitor ---------- */
+  .monitor {
+    --tone-a: #16868B; --tone-b: #0A3F47;
+    position: relative; overflow: hidden; border-radius: 22px; color: #fff;
+    padding: 20px 20px 18px;
+    background: radial-gradient(120% 140% at 15% 0%, var(--tone-a) 0%, var(--tone-b) 70%);
+    box-shadow: 0 10px 30px -18px rgba(8, 40, 46, .7);
+    transition: background .6s ease;
+  }
+  .monitor[data-level="DEGRADED"] { --tone-a: #B7861A; --tone-b: #4E3A0B; }
+  .monitor[data-level="BAD"] { --tone-a: #C9573A; --tone-b: #4A1A10; }
+  .monitor[data-level="OFFLINE"] { --tone-a: #B42318; --tone-b: #3D0B08; }
+  .monitor[data-level="UNKNOWN"] { --tone-a: #5E7A7E; --tone-b: #22363A; }
+  .monitor::after { /* faint monitor grid */
+    content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .09;
+    background-image: linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+  .monitor > * { position: relative; z-index: 1; }
+  .topline { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+             font-size: 13px; opacity: .85; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: .02em; opacity: 1; }
+  .brand svg { width: 22px; height: 22px; }
+  .verdict { font: 800 clamp(40px, 11vw, 68px)/1 var(--display); letter-spacing: -0.035em; margin: 18px 0 8px; }
+  .because { font-size: 16px; max-width: 46ch; opacity: .92; margin: 0; }
+  .traces { margin-top: 18px; display: grid; gap: 6px; }
+  .trace { display: grid; grid-template-columns: 74px 1fr auto; align-items: center; gap: 10px; }
+  .trace .who { font-weight: 700; font-size: 13px; letter-spacing: .03em; display: flex; align-items: center; gap: 6px; }
+  .trace .who i { flex: none; width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .trace svg { width: 100%; height: 42px; display: block; overflow: visible; }
+  .trace .now { font: 700 22px/1 var(--mono); min-width: 88px; text-align: right; letter-spacing: -0.03em; }
+  .trace .now small { font: 500 12px var(--body); opacity: .75; margin-left: 2px; }
+  .blip { animation: blip 2s ease-out infinite; transform-origin: center; transform-box: fill-box; }
+  @keyframes blip { 0% { opacity: .9; transform: scale(1); } 70% { opacity: 0; transform: scale(3.2); } 100% { opacity: 0; } }
+  .pill-muted { margin-top: 12px; display: inline-block; font-size: 13px; padding: 3px 10px; border-radius: 999px;
+                background: rgba(255,255,255,.16); }
+
+  /* ---------- Sections ---------- */
+  h2 { font: 700 13px/1 var(--body); letter-spacing: .08em; text-transform: uppercase; color: var(--soft);
+       margin: 30px 2px 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+  .isps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(270px, 100%), 1fr)); gap: 12px; }
+  .isp { border-top: 5px solid var(--c); }
+  .isp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .isp-name { font: 800 22px/1.1 var(--display); letter-spacing: -0.02em; }
+  .isp-name span { font: 500 12px var(--body); color: var(--soft); margin-left: 6px; letter-spacing: 0; }
+  .state { font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 999px; color: #fff; white-space: nowrap; }
+  .HEALTHY { background: var(--good); } .DEGRADED { background: var(--warn); } .BAD { background: var(--bad); }
+  .OFFLINE { background: var(--down); } .UNKNOWN { background: var(--idle); }
+  .big { display: flex; align-items: baseline; gap: 8px; margin: 14px 0 6px; }
+  .big b { font: 700 44px/1 var(--mono); letter-spacing: -0.04em; }
+  .big span { color: var(--soft); }
+  .facts { list-style: none; padding: 0; margin: 0; display: grid; gap: 3px; }
+  .facts li::before { content: "·"; color: var(--soft); margin-right: 8px; }
+  details { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 10px; }
+  summary { cursor: pointer; color: var(--soft); font-size: 13px; }
+  .mini { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+  .mini td { padding: 3px 0; }
+  .mini td + td { text-align: right; font-family: var(--mono); }
+
+  .router { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+  .router .name { font: 700 16px var(--display); display: flex; align-items: center; gap: 8px; }
+  .devices-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
+  .devices-toolbar input, .devices-toolbar select { min-height: 40px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--card); color: var(--ink); font: inherit; padding: 7px 10px; }
+  .devices-toolbar input { flex: 1 1 220px; min-width: 0; }
+  .device-list { display: grid; gap: 8px; }
+  .device-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, .55fr); gap: 14px;
+    align-items: center; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .device-row:last-child { border-bottom: 1px solid var(--line); }
+  .device-name { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
+  .device-identity { min-width: 0; }
+  .device-details { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 5px; }
+  .device-status { display: inline-flex; align-items: center; width: fit-content; margin-top: 7px; padding: 2px 8px;
+    border-radius: 999px; background: color-mix(in srgb, var(--good) 14%, transparent); color: var(--good);
+    font-size: 12px; font-weight: 650; }
+  .device-status.off { background: color-mix(in srgb, var(--idle) 16%, transparent); color: var(--soft); }
+  .device-actions { min-width: 0; }
+  .device-route-control { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px; margin-top: 6px; }
+  .device-route-control label { display: grid; gap: 3px; color: var(--soft); font-size: 12px; }
+  .device-route-control select { width: 100%; min-height: 40px; font-size: 14px; }
+  .device-route-control button { min-height: 40px; font: 650 13px var(--body); color: #fff; background: var(--brand);
+    border: 0; border-radius: 9px; padding: 7px 12px; cursor: pointer; }
+  .device-route-control button:disabled { opacity: .55; cursor: not-allowed; }
+  .device-route-help { color: var(--soft); font-size: 12px; line-height: 1.45; }
+  .group-editor { border: 1px solid var(--line); border-radius: 11px; padding: 10px; margin: 10px 0; background: var(--page); }
+  .group-editor[hidden] { display: none; }
+  .group-editor-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin-bottom: 8px; }
+  .group-editor-title { font-weight: 700; }
+  .group-selection-empty { margin: 0; color: var(--soft); font-size: 13px; }
+  .device-rename { border: 0; color: var(--brand); background: transparent; padding: 4px 0; cursor: pointer;
+    font: 600 12px var(--body); }
+  .device-guidance { border-left: 3px solid var(--brand); padding: 8px 10px; background: var(--page); border-radius: 0 8px 8px 0;
+    color: var(--soft); font-size: 13px; margin: 10px 0; }
+  .device-action-status { margin: 10px 0; padding: 9px 12px; border-radius: 9px; background: color-mix(in srgb, var(--good) 14%, transparent); }
+  .device-action-status.error { background: color-mix(in srgb, var(--bad) 13%, transparent); color: var(--bad); }
+  dialog { width: min(440px, calc(100% - 24px)); border: 1px solid var(--line); border-radius: 16px; padding: 20px;
+    color: var(--ink); background: var(--card); box-shadow: 0 18px 55px rgba(0,0,0,.28); }
+  dialog::backdrop { background: rgba(5, 20, 23, .58); }
+  dialog h3 { margin: 0 0 8px; font: 750 20px/1.2 var(--display); }
+  dialog p { color: var(--soft); }
+  .dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  .dialog-actions button { min-height: 40px; padding: 7px 13px; border: 1px solid var(--line); border-radius: 9px;
+    color: var(--ink); background: var(--card); font: 650 14px var(--body); cursor: pointer; }
+  .dialog-actions .primary { border-color: var(--brand); color: #fff; background: var(--brand); }
+  .dialog-input { display: grid; gap: 5px; margin-top: 14px; color: var(--soft); font-size: 13px; }
+  .dialog-input input { min-height: 42px; border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; color: var(--ink); background: var(--card); font: inherit; }
+  .device-history { display: block; color: var(--soft); font-size: 11px; font-weight: 400; margin-top: 2px; }
+  .device-meta { color: var(--soft); font-size: 13px; }
+  .route-history { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
+  #group-route-members { max-height: min(45vh, 420px); overflow: auto; }
+  .route-history summary { color: var(--brand); cursor: pointer; font-size: 13px; font-weight: 600; }
+  .route-history .events { margin-top: 4px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--good); display: inline-block; }
+  .dot.off { background: var(--down); }
+  .chip { font-size: 14px; }
+  .chip b { font-family: var(--mono); font-weight: 600; }
+  .note { width: 100%; font-size: 13px; color: var(--soft); }
+  .note.warn { color: var(--bad); }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .seg { display: inline-flex; background: var(--page); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+  .seg button { border: 0; background: transparent; padding: 6px 12px; border-radius: 8px; cursor: pointer; color: var(--soft); }
+  .seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  select { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; }
+  .chart { position: relative; }
+  .chart svg { width: 100%; height: 220px; display: block; }
+  .tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--page); font-size: 12px;
+         padding: 6px 9px; border-radius: 8px; white-space: nowrap; display: none; top: 8px; }
+  .legend { display: flex; gap: 16px; font-size: 13px; color: var(--soft); margin: 4px 0 8px; }
+  .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 10px; margin-top: 12px; }
+  .total { border-left: 4px solid var(--c); padding: 4px 0 4px 12px; font-size: 14px; }
+  .total b { display: block; font: 700 15px var(--display); }
+
+  .events { list-style: none; margin: 0; padding: 0; }
+  .events li { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+  .events li:last-child { border-bottom: 0; }
+  .events time { color: var(--soft); font-size: 13px; white-space: nowrap; }
+  .more { margin-top: 8px; background: none; border: 0; color: var(--brand); cursor: pointer; padding: 6px 0; font-weight: 600; }
+  .run { font: 600 13px var(--body); letter-spacing: 0; text-transform: none; color: #fff; background: var(--brand);
+         border: 0; border-radius: 999px; padding: 6px 14px; cursor: pointer; }
+  .run[disabled] { opacity: .6; cursor: progress; }
+  .speed-nums { display: flex; gap: 18px; align-items: baseline; margin: 10px 0 4px; flex-wrap: wrap; }
+  .speed-nums b { font: 700 30px/1 var(--mono); letter-spacing: -0.03em; }
+  .speed-nums span { color: var(--soft); font-size: 13px; }
+  .spark { width: 100%; height: 46px; display: block; margin-top: 8px; }
+  .dip { color: var(--bad); font-weight: 600; }
+  footer { margin-top: 28px; font-size: 13px; color: var(--soft); }
+  footer a { color: var(--brand); }
+  footer details { border: 0; }
+
+  @media (max-width: 520px) {
+    .trace { grid-template-columns: 62px 1fr auto; }
+    .trace .now { font-size: 18px; min-width: 70px; }
+    .big b { font-size: 38px; }
+    .device-row { grid-template-columns: 1fr; gap: 8px; padding: 12px; }
+    .device-route-control { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .blip { animation: none; opacity: 0; }
+    .monitor { transition: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <section class="monitor" id="monitor" data-level="UNKNOWN" aria-live="polite">
+    <div class="topline">
+      <div class="brand">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 13h4l2-4 3 9 3-14 3 11 2-2h5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        NetPulse
+      </div>
+      <span id="updated">Connecting…</span>
+    </div>
+    <h1 class="verdict" id="verdict">Starting up</h1>
+    <p class="because" id="because">Checking both connections…</p>
+    <div class="traces" id="traces"></div>
+    <div id="muted"></div>
+    <p class="soft" id="alert-policy" style="margin:8px 0 0"></p>
+  </section>
+
+  <h2>Your connections</h2>
+  <div class="isps" id="isps"></div>
+
+  <div id="router-wrap" hidden>
+    <h2>Router</h2>
+    <div class="card router" id="router"></div>
+  </div>
+
+  <div id="devices-wrap" hidden>
+    <h2>Home devices</h2>
+    <div class="card"><p class="soft" id="devices-note" style="margin:0"></p>
+      <p class="device-guidance" id="devices-guidance">Find a device by friendly name, IP, or MAC. The ER605 list shows DHCP leases; a listed lease does not prove the device is online right now. Optional LAN ping checks can show when a device replies, but silence may mean sleep or blocked ping and does not prove it is offline. Internet pause/resume is not available until ACL enforcement is verified; ER605 ACL rules do not affect clients on the same LAN, so controls remain disabled pending WAN2 and recovery validation. NetPulse protects its own Pi connection.</p>
+      <p class="device-guidance" id="device-scan-guidance"></p>
+      <p class="device-guidance" id="syslog-status" hidden></p>
+      <div class="devices-toolbar" id="presence-toggle-wrap">
+        <label class="device-meta"><input type="checkbox" id="presence-toggle"> Faster LAN ping hints</label>
+        <span class="soft" id="presence-toggle-help">Optional read-only checks; silence does not prove a device is offline.</span>
+      </div>
+      <div class="devices-toolbar">
+        <input id="device-search" type="search" placeholder="Find by device name, IP, or MAC" aria-label="Search home devices">
+        <select id="device-filter" aria-label="Filter home devices"><option value="all">All devices</option><option value="listed">In ER605 DHCP list</option><option value="reserved">Reserved devices</option><option value="needs-reservation">Needs reservation</option></select>
+        <span class="soft" id="device-count" aria-live="polite"></span>
+      </div>
+      <section class="card" aria-labelledby="groups-title" style="margin:12px 0">
+        <h3 id="groups-title" style="margin:0 0 6px">Device groups</h3>
+        <p class="device-route-help">Put devices with the same needs together, then review one WAN preference for the whole group. Saving membership never changes routes.</p>
+        <div class="devices-toolbar"><input id="group-name" maxlength="40" placeholder="Group name, e.g. Work devices" aria-label="Device group name">
+          <button id="group-save" type="button">Create device group</button><button id="group-new" type="button">New group</button><span id="group-selection-count" class="soft" aria-live="polite">0 selected</span></div>
+        <div class="group-editor" id="group-editor" hidden>
+          <div class="group-editor-head"><span class="group-editor-title" id="group-editor-title"></span><span class="soft" id="group-editor-count"></span></div>
+          <p class="group-selection-empty" id="group-selection-empty">Select devices below to add them to this group.</p>
+        </div>
+        <div id="group-selection-members" class="device-list" aria-label="Selected group members" hidden></div>
+        <div id="device-groups" class="device-list"></div>
+      </section>
+      <section class="card" id="paused-wrap" aria-labelledby="paused-title" style="margin:12px 0" hidden>
+        <h3 id="paused-title" style="margin:0 0 6px">Saved Internet pause state</h3>
+        <div id="paused-list" class="device-list"></div>
+      </section>
+      <div class="device-list" id="devices"></div>
+      <details class="route-history" id="group-history-wrap" hidden><summary>Recent group changes</summary><ul class="events" id="group-history"></ul></details>
+      <details class="route-history" id="route-history-wrap" hidden><summary>Recent route actions</summary><ul class="events" id="route-history"></ul></details>
+      </div>
+  </div>
+
+  <p id="device-action-status" class="device-action-status" role="status" hidden></p>
+  <dialog id="route-dialog" aria-labelledby="route-dialog-title">
+    <h3 id="route-dialog-title">Review connection change</h3>
+    <p><b id="route-dialog-device"></b><br><span id="route-dialog-address" class="device-meta"></span></p>
+    <p><span id="route-dialog-before"></span> → <b id="route-dialog-after"></b></p>
+    <p id="route-dialog-effect"></p>
+    <p class="device-route-help">Preference duration: <b id="route-dialog-expiry"></b></p>
+    <p class="device-route-help">Only this reserved device is affected. You can switch it back to Auto later.</p>
+    <div class="dialog-actions"><button type="button" id="route-cancel">Cancel</button><button type="button" class="primary" id="route-apply">Apply change</button></div>
+  </dialog>
+  <dialog id="pause-dialog" aria-labelledby="pause-dialog-title">
+    <h3 id="pause-dialog-title">Review Internet pause</h3>
+    <p><b id="pause-dialog-summary"></b></p><div id="pause-dialog-members" class="device-list"></div>
+    <p class="device-route-help">Duration: <b id="pause-dialog-expiry"></b></p>
+    <p id="pause-dialog-effect" class="device-route-help">IPv4 Internet; LAN remains only as validated; timed resume requires Pi running (no router-native expiry while off).</p>
+    <div class="dialog-actions"><button type="button" id="pause-cancel">Cancel</button><button type="button" class="primary" id="pause-apply">Confirm</button></div>
+  </dialog>
+  <dialog id="group-route-dialog" aria-labelledby="group-route-title">
+    <h3 id="group-route-title">Review group connection change</h3>
+    <p><b id="group-route-summary"></b></p><div id="group-route-members" class="device-list"></div>
+    <p id="group-route-effect" class="device-route-help"></p>
+    <p class="device-route-help">The router change is applied one device at a time. If a member fails, NetPulse attempts to restore and verify every earlier member.</p>
+    <div class="dialog-actions"><button type="button" id="group-route-cancel">Cancel</button><button type="button" class="primary" id="group-route-apply">Apply to group</button></div>
+  </dialog>
+  <dialog id="group-reservation-dialog" aria-labelledby="group-reservation-title">
+    <h3 id="group-reservation-title">Review group DHCP reservations</h3>
+    <p><b id="group-reservation-summary"></b></p><div id="group-reservation-members" class="device-list"></div>
+    <p id="group-reservation-effect" class="device-route-help"></p>
+    <p class="device-route-help">Each listed device stays on automatic DHCP. The router may renew its lease once. IP-MAC binding stays off. This does not change WAN routes.</p>
+    <div class="dialog-actions"><button type="button" id="group-reservation-cancel">Cancel</button><button type="button" class="primary" id="group-reservation-apply">Create reservations</button></div>
+  </dialog>
+  <dialog id="rename-dialog" aria-labelledby="rename-dialog-title">
+    <form id="rename-form">
+      <h3 id="rename-dialog-title">Name this device</h3>
+      <p class="device-route-help">This name is saved only on the NetPulse Pi and helps you find the device later.</p>
+      <label class="dialog-input">Friendly name<input id="rename-input" maxlength="48" autocomplete="off" required></label>
+      <div class="dialog-actions"><button type="button" id="rename-cancel">Cancel</button><button type="submit" class="primary" id="rename-save">Save name</button></div>
+    </form>
+  </dialog>
+  <dialog id="reservation-dialog" aria-labelledby="reservation-dialog-title">
+    <h3 id="reservation-dialog-title">Review DHCP reservation</h3>
+    <p><b id="reservation-dialog-device"></b><br><span id="reservation-dialog-address" class="device-meta"></span></p>
+    <p id="reservation-dialog-effect"></p>
+    <p class="device-route-help">This creates a DHCP reservation for this device's current address. The device stays on automatic DHCP. No WAN route is changed, and the optional IP-MAC binding stays off.</p>
+    <div class="dialog-actions"><button type="button" id="reservation-cancel">Cancel</button><button type="button" class="primary" id="reservation-apply">Create reservation</button></div>
+  </dialog>
+
+  <div id="pi-wrap" hidden>
+    <h2>Pi health</h2>
+    <div class="card"><p id="pi-disk" style="margin:0"></p><p id="pi-power" class="soft" style="margin:6px 0 0"></p><p id="pi-performance" class="soft" style="margin:6px 0 0"></p><p id="pi-capacity" class="soft" style="margin:6px 0 0"></p><p id="pi-backup" class="soft" style="margin:6px 0 0"></p><p id="pi-acl-recovery" class="soft" style="margin:6px 0 0"></p></div>
+  </div>
+
+  <h2>Speed <button class="run" id="run-speed">Run speed test</button></h2>
+  <div class="isps" id="speeds"></div>
+  <p class="soft" style="font-size:13px;margin:8px 2px 0" id="speed-note">Speeds above what the Pi can handle (about 220 Mbps) show as about that. Dips are what matter.</p>
+
+  <h2>History</h2>
+  <div class="card">
+    <div class="controls">
+      <div class="seg" role="group" aria-label="What to show" id="metric">
+        <button data-m="rtt_ms" aria-pressed="true">Speed of response</button>
+        <button data-m="loss_pct" aria-pressed="false">Packet loss</button>
+      </div>
+      <div class="seg" role="group" aria-label="Time range" id="range">
+        <button data-h="24" aria-pressed="true">Day</button>
+        <button data-h="168" aria-pressed="false">Week</button>
+        <button data-h="720" aria-pressed="false">Month</button>
+      </div>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div class="chart"><svg id="chart" role="img" aria-label="History chart"></svg><div class="tip" id="tip"></div></div>
+    <div class="controls" style="margin:10px 0 0">
+      <span class="soft" id="chart-note"></span>
+      <label class="soft" style="font-size:13px">Measured against
+        <select id="server"><option value="">all servers (typical)</option></select>
+      </label>
+    </div>
+    <div class="totals" id="totals"></div>
+  </div>
+
+  <h2>What happened</h2>
+  <div class="card">
+    <ul class="events" id="events"></ul>
+    <button class="more" id="more" hidden>Show more</button>
+  </div>
+
+  <h2>Monitor-only WAN suggestions</h2>
+  <div class="card">
+    <p class="soft" id="decision-review-note" style="margin:0 0 8px">Reviewing recent suggestions. NetPulse never changes routes from these recommendations.</p>
+    <ul class="events" id="decision-review" aria-live="polite"><li><span>🔀</span><span class="soft">Loading review…</span><span></span></li></ul>
+  </div>
+
+  <footer>
+    <p>📄 <a href="/report?days=30">ISP report (last 30 days)</a>: a printable summary of outages, bad hours and
+      speed tests to send to ANT or ONEOTT support. <a href="/api/report.csv?days=30">Download as CSV</a></p>
+    <details>
+      <summary>How NetPulse measures</summary>
+      <p>Every 10 seconds the Raspberry Pi pings Cloudflare, Google and Quad9 through each connection separately
+        (the ER605 pins each test address to one ISP). "Speed of response" is the round-trip time in milliseconds:
+        lower is better. Packet loss is the share of pings that got no answer. NetPulse learns what's normal for each
+        ISP, so a connection is called slow when it's much slower than its own usual, not just slower than the other.</p>
+      <p id="mode-note"></p>
+    </details>
+  </footer>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt = (v, d = 0) => v == null || isNaN(v) ? "–" : Number(v).toFixed(d);
+const clock = ts => new Date(ts * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+const when = ts => new Date(ts * 1000).toLocaleString([], {weekday: "short", hour: "2-digit", minute: "2-digit"});
+const deviceDate = ts => new Date(ts * 1000).toLocaleString([], {dateStyle: "medium", timeStyle: "short"});
+const SERVER = {"1.1.1.1": "Cloudflare", "8.8.8.8": "Google", "9.9.9.9": "Quad9"};
+const VERDICT = {HEALTHY: "All good", DEGRADED: "A bit slow", BAD: "Having trouble", OFFLINE: "Connection down", UNKNOWN: "Starting up"};
+const STATE_WORD = {HEALTHY: "Healthy", DEGRADED: "Slow", BAD: "Bad", OFFLINE: "Down", UNKNOWN: "Checking"};
+
+let order = [], labels = {}, hours = 24, metric = "rtt_ms", server = "", serversReady = false, lastStatus = null;
+let renameMac = "";
+const colorOf = wan => css(order.indexOf(wan) === 1 ? "--oneott" : "--ant");
+const labelOf = wan => labels[wan] || wan;
+
+function duration(sec) {
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 90) return "a minute";
+  if (sec < 3600) return Math.round(sec / 60) + " min";
+  if (sec < 172800) { const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60); return h + " h" + (m ? " " + m + " min" : ""); }
+  return Math.floor(sec / 86400) + " days";
+}
+const lossWords = l => l == null ? "–" : l < 0.5 ? "No packet loss" : l < 2 ? `Tiny packet loss (${fmt(l, 1)}%)` : `Losing ${fmt(l, 0)}% of packets`;
+const jitterWords = j => j == null ? "" : j < 5 ? "Steady" : j < 20 ? "Slightly uneven" : "Unsteady";
+function speedWord(w) {
+  if (w.rtt_ms == null) return "No answer";
+  if (w.rtt_ratio && w.rtt_ratio >= 2.5) return `${fmt(w.rtt_ratio, 1)}× slower than usual`;
+  return w.rtt_ms < 30 ? "Fast" : w.rtt_ms < 80 ? "Good" : w.rtt_ms < 150 ? "Slow" : "Very slow";
+}
+
+async function getJSON(url) { const r = await fetch(url, {cache: "no-store"}); if (!r.ok) throw new Error(r.status); return r.json(); }
+
+let deviceData = null;
+let pauseData = {state:{enabled:false,reason:"Awaiting Internet pause validation"},records:[]};
+const selectedDeviceMacs = new Set();
+let editingGroupId = null;
+
+function renderSyslogStatus(syslog) {
+  const status = $("syslog-status");
+  status.hidden = !syslog?.enabled;
+  if (!syslog?.enabled) return;
+  if (!syslog.listening) {
+    status.textContent = "Faster DHCP notices are configured but the local listener is unavailable; lease-list scans continue.";
+  } else if (Number.isFinite(syslog.last_allocation_at) &&
+             Date.now() / 1000 - syslog.last_allocation_at >= 0) {
+    const age = Date.now() / 1000 - syslog.last_allocation_at;
+    const outcomes = Number.isFinite(syslog.device_events) && Number.isFinite(syslog.known_renewals_suppressed)
+      ? ` · ${syslog.device_events} device events recorded, ${syslog.known_renewals_suppressed} known renewals ignored` : "";
+    status.textContent = `Faster DHCP notices are listening · last allocation recognized ${duration(age)} ago · since service start: ${syslog.accepted_allocations || 0} records recognized${outcomes}, ${syslog.duplicates_suppressed || 0} duplicates suppressed.`;
+  } else {
+    status.textContent = "Faster DHCP notices are listening and waiting for a recognized lease allocation. The periodic lease-list scan remains the confirmation source.";
+  }
+}
+
+async function refreshDevices() {
+  try {
+    const d = await getJSON("/api/devices");
+    try { pauseData = await getJSON("/api/devices/paused"); }
+    catch (_) { pauseData = {state:{enabled:false,reason:"Pause status is unavailable."},records:[]}; }
+    deviceData = d;
+    $("devices-wrap").hidden = !d.configured;
+    if (!d.configured) return;
+    renderSyslogStatus(d.syslog);
+    if (!d.ready) { $("devices-note").textContent = "Waiting for the first router check…"; return; }
+    renderDevices();
+  } catch (e) { /* router inventory is optional */ }
+}
+
+function pauseForMac(mac) { return (pauseData.records || []).find(r => r.mac === mac && r.status !== "resumed") || null; }
+function pauseForGroup(id) { return (pauseData.records || []).filter(r => Number(r.group_id) === Number(id) && r.status !== "resumed"); }
+function pauseControlsEnabled() { return !!pauseData.state?.enabled; }
+function pauseLabel(record) {
+  if (record?.expiry_label) return String(record.expiry_label).slice(0, 80);
+  const expiry = Number(record?.expires_at);
+  return Number.isFinite(expiry) && expiry > 0 && expiry < 4102444800 ? `until ${deviceDate(expiry)}` : "until resumed";
+}
+
+async function reviewPause(preview) {
+  $("pause-dialog-title").textContent = preview.action === "resume" ? "Review Internet resume" : "Review Internet pause";
+  $("pause-dialog-summary").textContent = preview.group || preview.device || "Selected devices";
+  $("pause-dialog-members").innerHTML = (preview.members || []).map(m =>
+    `<div class="device-row"><div><b>${esc(m.name || m.device || m.mac)}</b><div class="device-meta">${esc(m.ip || "No current IP")} · ${esc(m.mac || "")}</div></div></div>`).join("");
+  $("pause-dialog-effect").textContent = `IPv4 Internet path only; IPv6 or other paths may remain. LAN remains only as validated. Timed resume requires the Pi to be running (no router-native expiry while it is off). ${preview.effect || ""}`;
+  $("pause-dialog-expiry").textContent = preview.action === "resume" ? "Resumes now" : (preview.expiry_label || (preview.expires_in ? duration(preview.expires_in) : "Until resumed"));
+  return new Promise(resolve => { const dialog = $("pause-dialog"); dialog.addEventListener("close", () => resolve(dialog.returnValue === "apply"), {once:true}); dialog.returnValue="cancel"; dialog.showModal(); });
+}
+
+$("pause-cancel").onclick = () => $("pause-dialog").close("cancel");
+$("pause-apply").onclick = () => $("pause-dialog").close("apply");
+
+async function requestPause(button, isGroup) {
+  const card = button.closest(".device-row");
+  const action = button.dataset.action || "pause";
+  button.disabled = true;
+  try {
+    const payload = isGroup ? {id:Number(button.dataset.id), action,
+      duration_seconds: action === "resume" ? 0 : Number(card.querySelector(".pause-duration")?.value || 3600)} :
+      {mac:button.dataset.mac, action,
+       duration_seconds:action === "resume" ? 0 : Number(card.querySelector(".pause-duration")?.value || 3600)};
+    const url = isGroup ? "/api/device-groups/pause/preview" : "/api/devices/pause/preview";
+    const response = await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const preview = await response.json(); if (!response.ok) throw new Error(preview.error || response.status);
+    if (!(await reviewPause(preview))) return;
+    const applied = await fetch("/api/devices/pause/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:preview.token,confirmed:true})});
+    const result = await applied.json(); if (!applied.ok) throw new Error(result.error || applied.status);
+    deviceNotice(`${result.action === "resume" ? "Internet resumed" : "Internet paused"}${result.count ? ` for ${result.count} device${result.count === 1 ? "" : "s"}` : ""}. ${result.detail || ""}`);
+    await refreshDevices();
+  } catch (err) { deviceNotice("Internet control not completed: " + err.message,true); }
+  finally { button.disabled = false; }
+}
+
+function deviceNotice(message, error = false) {
+  const notice = $("device-action-status");
+  notice.textContent = message;
+  notice.classList.toggle("error", error);
+  notice.hidden = !message;
+}
+
+function reviewRoute(preview) {
+  $("route-dialog-device").textContent = preview.device || "Home device";
+  $("route-dialog-address").textContent = [preview.ip, preview.mac].join(" · ");
+  const observed = preview.current === "AUTO" ? "Auto balance" : labelOf(preview.current);
+  const saved = preview.saved_current === "AUTO" ? "Auto balance" : labelOf(preview.saved_current);
+  $("route-dialog-before").textContent = preview.saved_current === preview.current ? observed :
+    `${observed} on ER605 · NetPulse saved ${saved}`;
+  $("route-dialog-after").textContent = preview.route === "AUTO" ? "Auto balance" : `Prefer ${labelOf(preview.route)}`;
+  $("route-dialog-effect").textContent = preview.effect;
+  $("route-dialog-expiry").textContent = preview.expiry_label || "Until changed";
+  return new Promise(resolve => {
+    const dialog = $("route-dialog");
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "apply"), {once: true});
+    dialog.returnValue = "cancel";
+    dialog.showModal();
+  });
+}
+
+$("route-cancel").onclick = () => $("route-dialog").close("cancel");
+$("route-apply").onclick = () => $("route-dialog").close("apply");
+
+function renderDevices() {
+    const d = deviceData;
+    if (!d?.ready) return;
+    const scanMinutes = Math.max(1, Math.ceil((d.scan_interval_seconds || 600) / 60));
+    const confirmScans = Math.max(1, d.missing_confirmation_scans || 3);
+    const departedMin = Math.max(0, (confirmScans - 1) * scanMinutes);
+    const departedMax = confirmScans * scanMinutes;
+    const mins = value => `${value} ${value === 1 ? "minute" : "minutes"}`;
+    const departureTime = confirmScans < 2 ? `within ${mins(departedMax)}` :
+      `about ${mins(departedMin)}–${mins(departedMax)}`;
+    $("device-scan-guidance").textContent = `ER605 DHCP lease list is checked about every ${mins(scanMinutes)}. New or returning leases are noticed on the next scan. A lease is marked absent after ${confirmScans} successful scans (${departureTime}) to avoid false alerts. The ER605 may keep a disconnected device listed until its DHCP lease expires; when available, the device card shows the remaining lease time. After expiry, allow ${departureTime} for confirmation. A permanent lease may stay listed indefinitely. This inventory history describes changes to the router's lease list, not confirmed device arrival or departure.`;
+    $("presence-toggle-wrap").hidden = !d.presence_available;
+    $("presence-toggle").checked = !!d.presence_enabled;
+    $("presence-toggle").disabled = !d.presence_available;
+    const probeMisses = Math.max(2, d.presence_confirm_misses || 3);
+    const probeIntervalSeconds = d.presence_probe_interval_seconds || 60;
+    const presenceSupported = d.presence_inventory_supported !== false;
+    const perDeviceIntervalSeconds = d.presence_probe_cycle_seconds || probeIntervalSeconds;
+    const probeIntervalMinutes = Math.max(1, Math.ceil(perDeviceIntervalSeconds / 60));
+    if (!presenceSupported) $("device-scan-guidance").textContent +=
+      ` LAN ping hints are unavailable while the ER605 lease inventory exceeds the 512-device safety cap.`;
+    else if (!d.presence_enabled) $("device-scan-guidance").textContent +=
+      ` Turn on Faster LAN ping hints above for earlier reachability changes. Up to 128 listed private-LAN devices are checked per scan; each device is checked about every ${mins(probeIntervalMinutes)} with the current inventory. Devices that never answer ping remain unknown.`;
+    else {
+      const earliestMinutes = Math.max(1, Math.ceil((perDeviceIntervalSeconds * (probeMisses - 1)) / 60));
+      const latestMinutes = Math.max(1, Math.ceil((perDeviceIntervalSeconds * probeMisses) / 60));
+      const estimate = earliestMinutes === latestMinutes ? mins(latestMinutes) :
+        `${mins(earliestMinutes)}–${mins(latestMinutes)}`;
+      $("device-scan-guidance").textContent +=
+        ` LAN ping hints can arrive in about ${estimate} after a previously responsive device stops replying (${probeMisses} missed checks, one check about every ${mins(probeIntervalMinutes)} for this inventory). Sleeping or ping-filtering devices may cause false silence.`;
+    }
+    const checked = d.updated ? (d.inventory_age_seconds == null ?
+      " · last scan time unknown or in the future · stale" :
+      ` · last scan ${duration(d.inventory_age_seconds)} ago${d.inventory_stale ? " · stale" : ""}`) : "";
+    const routerState = lastStatus?.router;
+    const nextRouterCheck = routerState?.paused_until ?
+      ` · router checks paused until ${clock(routerState.paused_until)}` :
+      !routerState?.ok ? " · next router check waits for recovery" :
+      Number.isFinite(routerState.next_check) ?
+        ` · next router check in ${duration(Math.max(0, routerState.next_check - Date.now() / 1000))}` : "";
+    const listed = d.devices.filter(x => x.listed).length;
+    const reserved = d.devices.filter(x => x.reserved).length;
+    const controlNote = d.control?.enabled ? " · route changes require review" :
+      ` · route changes locked${d.control?.reason ? ": " + d.control.reason : ""}`;
+    const listedSummary = d.inventory_stale ? `${listed} leases listed at last scan` : `${listed} leases listed`;
+    $("devices-note").textContent = `${listedSummary} · ${d.devices.length} known · ${reserved} enabled reservations${checked}${nextRouterCheck}${controlNote}`;
+    const query = $("device-search").value.trim().toLowerCase();
+    const filter = $("device-filter").value;
+    const shownDevices = d.devices.filter(x => {
+      const text = [x.label || "", x.name || "", x.ip || "", x.mac || ""].join(" ").toLowerCase();
+      return (!query || text.includes(query)) &&
+        (filter === "all" || (filter === "listed" && x.listed) ||
+         (filter === "reserved" && x.reserved) || (filter === "needs-reservation" && !x.reserved));
+    }).sort((a, b) => Number(b.listed) - Number(a.listed) || Number(b.reserved) - Number(a.reserved) ||
+      (a.label || a.name || "").localeCompare(b.label || b.name || ""));
+    $("device-count").textContent = `${shownDevices.length} shown`;
+    renderGroupSelection();
+    renderGroups(d.groups || []);
+    const activePauses = (pauseData.records || []).filter(r => r.status !== "resumed");
+    $("paused-wrap").hidden = activePauses.length === 0;
+    $("paused-list").innerHTML = activePauses.map(r => { const label = r.label || r.mac || "Device";
+      const state = r.status === "paused" ? "Paused (IPv4)" : `Needs review · ${r.status || "status unavailable"}`;
+      return `<div class="device-row"><div class="device-identity"><b>${esc(label)}</b><span class="device-history">${esc(state)}${r.expiry_label || r.expires_at ? ` · ${esc(pauseLabel(r))}` : " · until resumed"}</span></div></div>`;
+    }).join("");
+    $("devices").innerHTML = shownDevices.length ? shownDevices.map(x => {
+      const shown = x.label || x.name, mac = x.mac;
+      const seen = x.first_seen ? `<span class="device-history">First listed ${esc(deviceDate(x.first_seen))} · Last listed ${esc(deviceDate(x.last_seen))}</span>` : "";
+      const leaseInfo = x.lease ? '<span class="device-history">' +
+        (String(x.lease).toLowerCase() === "permanent" ? "DHCP lease: permanent" :
+          "DHCP lease time remaining: " + esc(x.lease)) + "</span>" : "";
+      const presence = x.lan_presence || {};
+      const presenceNow = Date.now() / 1000;
+      const rawPresenceCheckAge = presence.checked_at == null ? NaN :
+        presenceNow - Number(presence.checked_at);
+      const presenceCheckAge = Number.isFinite(rawPresenceCheckAge) && rawPresenceCheckAge >= 0 ?
+        Math.floor(rawPresenceCheckAge) : null;
+      const rawPresenceAge = presence.last_reply_at == null ? NaN :
+        presenceNow - Number(presence.last_reply_at);
+      const presenceAge = Number.isFinite(rawPresenceAge) && rawPresenceAge >= 0 ?
+        Math.floor(rawPresenceAge) : null;
+      const presenceCycleSeconds = d.presence_probe_cycle_seconds || d.presence_probe_interval_seconds || 60;
+      const presenceStale = presence.checked_at != null && (presenceCheckAge == null ||
+        presenceCheckAge > Math.max(180, presenceCycleSeconds * 3));
+      const presenceStatus = !d.presence_enabled ? "LAN ping checks disabled" :
+        d.presence_inventory_supported === false ?
+        "LAN ping checks unavailable · lease inventory exceeds safety cap" :
+        presenceStale ? "Last LAN ping check " + duration(presenceCheckAge) + " ago · stale" :
+        presence.state === "replying" && Number(presence.misses || 0) > 0 ?
+          "No reply to the last " + Number(presence.misses) + " ping check(s) · last reply " +
+          (presenceAge == null ? "unknown" : duration(presenceAge) + " ago") :
+        presence.state === "replying" ? "Pi received a LAN ping reply" +
+          (presenceAge == null ? "" : " · " + duration(presenceAge) + " ago") :
+        presence.state === "no_reply" ? "No ping reply for " + Number(presence.misses || 0) +
+          " checks" + (Number(presence.recovery_replies || 0) > 0 ?
+            " · reply seen " + Number(presence.recovery_replies) + "/2 checks; confirming recovery" :
+            " · device may sleep or block ping") :
+        "LAN presence unknown · no ping reply seen yet" + (presenceCheckAge == null ? "" :
+          " · checked " + duration(presenceCheckAge) + " ago");
+      const routeName = x.route === "WAN1" || x.route === "WAN2" ? labelOf(x.route) : "Auto balance";
+      const observedRoute = x.np_rule_route === "WAN1" || x.np_rule_route === "WAN2" ? labelOf(x.np_rule_route) :
+        x.np_rule_route === "AUTO" ? "Auto" : "unavailable";
+      const observedAt = x.np_rule_checked_at ? ` · checked ${esc(deviceDate(x.np_rule_checked_at))}` : "";
+      const observedStale = x.np_rule_stale === true ? " · stale read" : "";
+      const observedDrift = x.np_rule_drift === true ? " · differs from saved preference" :
+        x.np_rule_drift === false ? " · matches saved preference" : "";
+      const routing = x.protected ? `<p class="device-route-help">This is the NetPulse Pi. Its WAN route is protected so monitoring and remote control stay reachable.</p>` :
+      d.control?.enabled && x.reserved && mac ? `<div class="device-route-control">
+          <label>Internet connection<select aria-label="Internet connection for ${esc(shown)}" data-mac="${esc(mac)}">
+          <option value="AUTO" ${x.route === "AUTO" ? "selected" : ""}>Auto balance</option>
+          <option value="WAN1" ${x.route === "WAN1" ? "selected" : ""}>Prefer ${esc(labelOf("WAN1"))}</option>
+          <option value="WAN2" ${x.route === "WAN2" ? "selected" : ""}>Prefer ${esc(labelOf("WAN2"))}</option>
+          </select></label><label>Return to Auto<select class="device-route-duration" aria-label="Preference duration for ${esc(shown)}" data-mac="${esc(mac)}">
+          <option value="0">Until changed</option><option value="3600" selected>1 hour</option><option value="21600">6 hours</option>
+          <option value="86400">24 hours</option><option value="604800">7 days</option>
+          </select></label><button type="button" class="device-route-preview" data-mac="${esc(mac)}">Review change</button>
+          </div><span class="device-history">Current: ${esc(routeName)}${x.route_expires_at ? ` · returns to Auto ${esc(deviceDate(x.route_expires_at))}` : x.route !== "AUTO" ? " · until changed" : ""} · confirm each change</span>` :
+        d.control?.enabled && x.listed && !x.reserved && mac ? `<div class="device-route-control"><button type="button" class="device-reserve-preview" data-mac="${esc(mac)}">Reserve current IP</button></div>
+          <p class="device-route-help">Keeps the device on DHCP. After confirmation, you can choose Auto, WAN1, or WAN2 here.</p>` :
+        !x.reserved ? `<p class="device-route-help">To steer safely, create an Address Reservation in Omada for this MAC and its current IP. The device stays on automatic DHCP; it may need to renew its lease once.</p>` :
+        `<p class="device-route-help">${esc(d.control?.reason || "WAN controls are locked.")}</p>`;
+      const pauseRecord = pauseForMac(mac);
+      const pauseVerified = pauseRecord?.status === "paused";
+      const canPause = pauseControlsEnabled() && !x.protected && !!mac;
+      const canResume = !!pauseRecord && !!pauseData.state?.cleanup_enabled;
+      const internetControl = `<section class="device-route-control internet-control" aria-label="Internet pause controls">
+        <div><b>Internet</b><span class="device-history">${pauseRecord ? `${pauseRecord.status === "paused" ? "Paused (IPv4)" : `Needs review · ${pauseRecord.status || "status unavailable"}`} · ${esc(pauseLabel(pauseRecord))}` : "No saved pause"}</span></div>
+        ${pauseRecord ? `<button type="button" class="internet-resume" data-action="resume" data-mac="${esc(mac)}" ${canResume ? "" : "disabled"}>${pauseVerified ? "Review resume" : "Review cleanup"}</button>` :
+          `<label>Pause duration<select class="pause-duration" aria-label="Internet pause duration for ${esc(shown)}"><option value="3600" selected>1 hour</option><option value="900">15 minutes</option><option value="21600">6 hours</option><option value="0">Until resumed</option></select></label><button type="button" class="internet-pause" data-action="pause" data-mac="${esc(mac)}" ${canPause ? "" : "disabled"}>Review pause</button>`}
+        ${!pauseControlsEnabled() ? `<span class="device-route-help">${esc(pauseData.state?.reason || "Internet pause has not been enabled. Awaiting WAN2 and recovery validation.")}</span>` : ""}</section>`;
+      const deviceStatus = x.protected ? "NetPulse Pi · protected" :
+        x.listed && d.inventory_stale ? `Last scan · lease listed · stale${x.reserved ? " · reserved" : ""}` :
+        x.listed ? (x.reserved ? "Lease listed · reserved" : "Lease listed · needs reservation") : "Saved reservation · not in current lease list";
+      return `<article class="device-row">
+        <div class="device-identity"><div class="device-name">${esc(shown || "Unnamed device")}</div>
+          ${mac && !x.protected ? `<label class="device-meta"><input type="checkbox" class="group-device-select" data-mac="${esc(mac)}" ${selectedDeviceMacs.has(mac) ? "checked" : ""}> Add to group</label>` : ""}
+          <div class="device-details"><span class="device-meta">IP ${esc(x.ip || "not assigned")}</span>
+            <span class="device-meta">MAC ${esc(mac || "unavailable")}</span></div>
+          ${leaseInfo}
+          ${x.group ? `<span class="device-history">Group: ${esc(x.group)}</span>` : ""}
+          <span class="device-status ${x.listed && !x.protected && !d.inventory_stale ? "" : "off"}">${esc(deviceStatus)}</span>
+          <span class="device-history">${esc(presenceStatus)}</span>
+          <span class="device-history">ER605 NetPulse rule last read: ${esc(observedRoute)}${esc(observedDrift)}${observedAt}${esc(observedStale)} · not live per-flow tracking</span>
+          ${x.route === "WAN1" || x.route === "WAN2" ? `<span class="device-history">This rule stays on the ER605 if the Pi is offline. Priority mode uses the router's own WAN online detection; the rule stops applying when the ER605 reports the selected WAN offline. ${x.route_expires_at ? "NetPulse must be running at expiry to return this device to Auto; if the Pi is down then, the rule stays until NetPulse returns." : "This preference stays until changed."}</span>` : ""}
+          ${seen}${mac ? `<button type="button" class="device-rename" data-mac="${esc(mac)}" data-current="${esc(shown)}">Edit device name</button>` : ""}
+        </div><div class="device-actions">${routing}${internetControl}</div>
+      </article>`;
+    }).join("") : `<p class="soft">${d.devices.length ? "No devices match this search." : "No DHCP devices reported yet."}</p>`;
+    const audit = d.route_history || [];
+    $("route-history-wrap").hidden = audit.length === 0;
+    $("route-history").innerHTML = audit.map(x => {
+      const oldRoute = x.old_route === "WAN1" || x.old_route === "WAN2" ? labelOf(x.old_route) : x.old_route;
+      const newRoute = x.new_route === "WAN1" || x.new_route === "WAN2" ? labelOf(x.new_route) : x.new_route;
+      const result = x.result === "applied" ? "verified" : "failed";
+      const actor = x.actor === "telegram owner" ? "Telegram" : x.actor === "system expiry" ? "Automatic expiry" : "Dashboard";
+      return `<li><span>${x.result === "applied" ? "✅" : "⚠️"}</span><span>${esc(actor)} · ${esc(x.ip)} · ${esc(oldRoute)} → ${esc(newRoute)} · ${esc(result)}${x.detail ? `<span class="device-history">${esc(x.detail)}</span>` : ""}</span><time>${esc(when(x.ts))}</time></li>`;
+    }).join("");
+    const groupAudit = d.group_history || [];
+    $("group-history-wrap").hidden = groupAudit.length === 0;
+    $("group-history").innerHTML = groupAudit.map(x => {
+      const route = x.route === "WAN1" || x.route === "WAN2" ? labelOf(x.route) : x.route;
+      return `<li><span>${x.result === "applied" ? "✅" : "⚠️"}</span><span>${esc(x.group)} · ${esc(route)} · ${x.count} devices · ${esc(x.result)}${x.detail ? `<span class="device-history">${esc(x.detail)}</span>` : ""}</span><time>${esc(when(x.ts))}</time></li>`;
+    }).join("");
+}
+
+function renderGroupSelection() {
+  $("group-selection-count").textContent = `${selectedDeviceMacs.size} selected`;
+  const editor = $("group-editor");
+  editor.hidden = !($("group-name").value.trim() || selectedDeviceMacs.size);
+  $("group-editor-title").textContent = editingGroupId === null
+    ? `New group${$("group-name").value.trim() ? ` · ${$("group-name").value.trim()}` : ""}`
+    : `Editing ${$("group-name").value.trim() || "device group"}`;
+  $("group-editor-count").textContent = `${selectedDeviceMacs.size} selected · changes are a draft`;
+  $("group-selection-empty").hidden = selectedDeviceMacs.size > 0;
+  $("group-save").textContent = editingGroupId === null ? "Create device group" : "Save group membership";
+  $("group-save").disabled = !$("group-name").value.trim() || selectedDeviceMacs.size === 0;
+  const host = $("group-selection-members");
+  host.hidden = selectedDeviceMacs.size === 0;
+  host.innerHTML = [...selectedDeviceMacs].map(mac => {
+    const device = (deviceData?.devices || []).find(item => item.mac === mac);
+    const name = device?.label || device?.name || mac;
+    const status = device ? (device.ip || "No current IP") : "Unavailable in the current router list";
+    return `<div class="device-row"><div class="device-identity"><div class="device-name">${esc(name)}</div><span class="device-history">${esc(mac)} · ${esc(status)}</span></div><button type="button" class="group-member-remove" data-mac="${esc(mac)}" aria-label="Remove ${esc(name)} from selected members">Remove from selection</button></div>`;
+  }).join("") + (selectedDeviceMacs.size ? `<p class="device-route-help">Membership changes take effect when you save this group. Saving stops Smart WAN for this group until you enable it again; current device routes stay in place.</p>` : "");
+}
+
+$("group-selection-members").addEventListener("click", e => {
+  const button = e.target.closest(".group-member-remove");
+  if (!button || !selectedDeviceMacs.delete(button.dataset.mac)) return;
+  renderDevices();
+});
+
+$("group-name").addEventListener("input", renderGroupSelection);
+
+function renderGroups(groups) {
+  const host = $("device-groups");
+  if (!groups.length) { host.innerHTML = `<p class="soft">No groups yet. Select devices below and save them as a group.</p>`; return; }
+  host.innerHTML = groups.map(g => {
+    const groupPauseRecords = typeof pauseData === "undefined" ? [] : (pauseData.records || []).filter(r => g.members.includes(r.mac) && r.status !== "resumed");
+    const internetPauseControlsEnabled = typeof pauseData !== "undefined" && !!pauseData.state?.enabled;
+    const pauseCleanupEnabled = typeof pauseData !== "undefined" && !!pauseData.state?.cleanup_enabled;
+    const names = g.members.map(mac => {
+      const d = deviceData.devices.find(item => item.mac === mac);
+      if (!d) return mac + " (unavailable)";
+      const readiness = d.protected ? "protected" : d.reserved ? "ready" : "needs reservation";
+      const macTail = String(d.mac || "").toUpperCase().replace(/[^0-9A-F]/g, "").slice(-6)
+        .match(/.{2}/g)?.join(":") || "unknown";
+      return (d.label || d.name) + " (" + (d.ip || "no IP") + "; MAC …" + macTail + "; " + readiness + ")";
+    });
+    const reservedCount = g.reserved_count || 0, blockedCount = g.blocked_count ?? g.members.length;
+    const unreservedCount = Math.max(0, g.members.length - reservedCount);
+    const controlsReady = !!deviceData.control?.enabled;
+    const activeRoute = g.route || "AUTO";
+    const groupSuggestion = g.suggested_wan;
+    const suggestionBasis = groupSuggestion?.reason?.startsWith("comparable recent throughput")
+      ? "comparable download/upload tests broke a ping tie"
+      : groupSuggestion?.reason?.startsWith("current WAN retained")
+        ? "current WAN retained inside the 2 ms ping tie band"
+        : groupSuggestion?.state === "DEGRADED"
+          ? "lowest ping among degraded links"
+          : "healthy-link probe latency";
+    const smartEnabled = !!g.smart_routing_enabled;
+    const monitorAdvice = g.monitor_advice;
+    const monitorAdviceText = monitorAdvice
+      ? smartEnabled
+        ? `${monitorAdvice.ready ? "Stable Smart WAN candidate" : "Waiting for a stable Smart WAN candidate"}: ${labelOf(monitorAdvice.candidate)} · ${monitorAdvice.observations} samples over ${duration(monitorAdvice.held_seconds)}${monitorAdvice.ready ? "" : ` of ${duration(monitorAdvice.required_seconds)}`} · automatic changes require fresh router checks and the 15-minute cooldown`
+        : `${monitorAdvice.ready ? "Stable monitor-only candidate" : "Monitoring candidate"}: ${labelOf(monitorAdvice.candidate)} · ${monitorAdvice.observations} samples over ${duration(monitorAdvice.held_seconds)}${monitorAdvice.ready ? "" : ` of ${duration(monitorAdvice.required_seconds)}`} · no route changed`
+      : "";
+    const routeReadback = g.route_readback === "matches" ? "All ER605 rules match saved group preferences" :
+      g.route_readback === "drift" ? `${g.route_drift_count} ER605 rules differ from saved preferences` :
+      g.route_readback === "stale" ? "ER605 rule read-back is stale" :
+      `ER605 rule read-back unavailable for ${g.route_unknown_count} members`;
+    const smartReady = !blockedCount && activeRoute !== "MIXED" && g.route_readback === "matches";
+    const smartStatus = smartEnabled
+      ? `Smart WAN on · automatic stable changes${g.smart_last_action_at ? ` · last action ${duration(Math.max(0, Date.now()/1000 - g.smart_last_action_at))} ago` : ""}`
+      : smartReady ? "Smart WAN off · needs explicit opt-in" : "Smart WAN unavailable · resolve member reservations and route read-back first";
+    const speedTests = Object.entries(deviceData.recent_speeds || {})
+      .filter(([wan, sample]) => ["WAN1", "WAN2"].includes(wan) && sample && Number.isFinite(sample.down_mbps))
+      .map(([wan, sample]) => `${labelOf(wan)} ${fmt(sample.down_mbps, 1)}/${sample.up_mbps == null ? "?" : fmt(sample.up_mbps, 1)} Mbps down/up${sample.loaded_ms == null ? "" : ` · loaded ping ${fmt(sample.loaded_ms, 1)} ms`} · ${duration(sample.age_seconds)} ago`);
+    const speedComparison = deviceData.recent_speed_comparison;
+    const comparisonName = winner => winner === "tie" ? "tie" :
+      winner === "WAN1" || winner === "WAN2" ? labelOf(winner) : "unavailable";
+    const speedComparisonText = speedComparison
+      ? `Closest-in-time tests (≤15 min apart): fastest download ${comparisonName(speedComparison.download_winner)} · fastest upload ${comparisonName(speedComparison.upload_winner)} (can break a ping tie only when both favor the same WAN by ≥15%, health/loss/jitter are no worse, and live RTT differs by ≤2 ms)`
+      : "No close-in-time speed test pair to compare";
+    return `<article class="device-row"><div class="device-identity"><div class="device-name">${esc(g.name)}</div>
+      <span class="device-history">${g.members.length} member${g.members.length === 1 ? "" : "s"} · ${reservedCount} with enabled reservations${names.length ? ` · ${esc(names.join(", "))}` : ""}</span>
+      <span class="device-history">${esc(routeReadback)}</span>
+      ${groupSuggestion ? `<span class="device-history">Suggested WAN: ${esc(labelOf(groupSuggestion.wan))} · ${fmt(groupSuggestion.rtt_ms, 1)} ms · ${fmt(groupSuggestion.loss_pct, 1)}% loss · ${esc(suggestionBasis)} · monitor only</span>` : `<span class="device-history">No fresh WAN recommendation</span>`}
+      ${monitorAdvice ? `<span class="device-history">${esc(monitorAdviceText)}</span>` : ""}
+      <span class="device-history">${esc(smartStatus)}${smartEnabled ? " · waits for stable health/latency, then applies to every member; 15-minute cooldown" : ""}</span>
+      <span class="device-history">Recent speed tests (24h; used only for a close-ping tie): ${speedTests.length ? speedTests.map(esc).join(" · ") : "none available"}</span>
+      <span class="device-history">${esc(speedComparisonText)}</span></div>
+      <div class="device-route-control"><label>Group WAN preference${activeRoute === "MIXED" ? " · members currently differ" : g.expiry_mixed ? " · expiry varies" : ""}<select class="group-route-choice" data-id="${g.id}">
+        ${activeRoute === "MIXED" ? `<option value="MIXED" selected disabled>Mixed member routes</option>` : ""}
+        <option value="AUTO" ${activeRoute === "AUTO" ? "selected" : ""}>Auto balance</option>
+        <option value="WAN1" ${activeRoute === "WAN1" ? "selected" : ""}>Prefer ${esc(labelOf("WAN1"))}</option>
+        <option value="WAN2" ${activeRoute === "WAN2" ? "selected" : ""}>Prefer ${esc(labelOf("WAN2"))}</option></select></label>
+        <label>Duration<select class="group-route-duration" data-id="${g.id}"><option value="0">Until changed</option><option value="3600" selected>1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option><option value="604800">7 days</option></select></label>
+        <label title="Applies a stable measured WAN preference to every eligible group member"><input type="checkbox" class="group-smart-routing" data-id="${g.id}" ${smartEnabled ? "checked" : ""} ${!smartEnabled && (!smartReady || !controlsReady) ? "disabled" : ""}> Smart WAN</label>
+        ${unreservedCount ? `<button type="button" class="group-reservation-preview" data-id="${g.id}" ${controlsReady ? "" : "disabled"}>Review ${unreservedCount} reservation${unreservedCount === 1 ? "" : "s"}</button>` : ""}
+        ${groupSuggestion && !blockedCount ? `<button type="button" class="group-suggestion-preview" data-id="${g.id}" data-wan="${esc(groupSuggestion.wan)}" ${controlsReady ? "" : "disabled"}>Review suggested route</button>` : ""}
+        <button type="button" class="group-route-preview" data-id="${g.id}" ${blockedCount || !controlsReady ? "disabled" : ""}>Review group change</button>
+        ${groupPauseRecords.length ? (groupPauseRecords.some(r => ["paused","applying","resuming","error"].includes(r.status)) ? `<button type="button" class="internet-resume" data-action="resume" data-id="${g.id}" ${pauseCleanupEnabled ? "" : "disabled"}>Review Internet cleanup</button>` : `<span class="device-route-help">Pause needs manual review · ${groupPauseRecords.map(r => esc(r.label || r.mac)).join(", ")}</span>`) : `<label>Internet pause duration<select class="pause-duration" data-id="${g.id}"><option value="3600" selected>1 hour</option><option value="900">15 minutes</option><option value="21600">6 hours</option><option value="0">Until resumed</option></select></label><button type="button" class="internet-pause" data-action="pause" data-id="${g.id}" ${internetPauseControlsEnabled ? "" : "disabled"}>Review Internet pause</button>`}
+        <button type="button" class="group-edit-members" data-id="${g.id}">Edit members</button><button type="button" class="group-delete" data-id="${g.id}">Delete group</button>
+      </div>${!internetPauseControlsEnabled ? `<p class="device-route-help">${typeof pauseData === "undefined" ? "Internet pause has not been enabled. Awaiting WAN2 and recovery validation." : esc(pauseData.state?.reason || "Internet pause has not been enabled. Awaiting WAN2 and recovery validation.")}</p>` : ""}${!controlsReady ? `<p class="device-route-help">WAN controls are locked: ${esc(deviceData.control?.reason || "control readiness is unavailable")}</p>` :
+        blockedCount ? `<p class="device-route-help">Enable DHCP reservations for unreserved members, and remove protected or unavailable members before steering this group.</p>` : ""}</article>`;
+  }).join("");
+}
+
+$("device-groups").addEventListener("change", async e => {
+  const toggle = e.target.closest(".group-smart-routing");
+  if (!toggle) return;
+  const enabled = toggle.checked;
+  if (enabled && !window.confirm(
+    "Enable Smart WAN for this group? NetPulse will automatically move every group member to a stable healthy, lower-latency WAN recommendation. It requires fresh router checks and verified member routes, waits for at least 3 observations and the configured hold, and enforces a 15-minute cooldown. Comparable recent speed tests can break a close ping tie. The ER605 route remains stored if the Pi is offline; router-native Priority mode provides WAN-offline failover. No route changes now; only future stable recommendations can apply. Continue?")) {
+    toggle.checked = false;
+    return;
+  }
+  toggle.disabled = true;
+  try {
+    const response = await fetch("/api/device-groups/smart-routing", {method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id:Number(toggle.dataset.id), enabled})});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || response.status);
+    deviceNotice(`${result.group}: Smart WAN ${enabled ? "enabled" : "disabled"}. ${enabled ? "No route changed; the next stable recommendation may steer every member." : "Automatic steering has stopped; the current WAN preference stays in place. Use Review group change → Auto balance if you want to restore normal load balancing."}`);
+    await refreshDevices();
+  } catch (err) {
+    toggle.checked = !enabled;
+    deviceNotice("Smart WAN setting not changed: " + err.message, true);
+  } finally { toggle.disabled = false; }
+});
+
+$("presence-toggle").addEventListener("change", async e => {
+  const toggle = e.target, enabled = toggle.checked;
+  toggle.disabled = true;
+  try {
+    const response = await fetch("/api/devices/presence", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({enabled})});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || response.status);
+    toggle.checked = !!result.enabled;
+    deviceNotice(result.enabled ? "Faster LAN ping hints enabled. Only devices that answered before can trigger a stopped-replying alert." :
+      "Faster LAN ping hints disabled. Any current scan will finish, but its result will be ignored.");
+    await refreshDevices();
+  } catch (err) {
+    toggle.checked = !enabled;
+    deviceNotice("Could not change LAN ping hints: " + err.message, true);
+  } finally { toggle.disabled = false; }
+});
+
+$("devices").addEventListener("change", e => {
+  const box = e.target.closest(".group-device-select"); if (!box) return;
+  box.checked ? selectedDeviceMacs.add(box.dataset.mac) : selectedDeviceMacs.delete(box.dataset.mac);
+  renderGroupSelection();
+});
+
+$("group-save").addEventListener("click", async () => {
+  const name = $("group-name").value.trim();
+  const groups = deviceData?.groups || [];
+  const existing = groups.find(g => g.name.toLowerCase() === name.toLowerCase());
+  if (!name || !selectedDeviceMacs.size) { deviceNotice("Enter a group name and select at least one device.", true); return; }
+  if (existing && existing.id !== editingGroupId) {
+    deviceNotice("That group name is already in use. Choose Edit members on that group to change its membership.", true);
+    return;
+  }
+  try {
+    const r = await fetch("/api/device-groups/save", {method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id: editingGroupId, name, members:[...selectedDeviceMacs]})});
+    const result = await r.json(); if (!r.ok) throw new Error(result.error || r.status);
+    editingGroupId = null; selectedDeviceMacs.clear();
+    deviceNotice("Saved " + result.name + " with " + result.members.length + " device" + (result.members.length === 1 ? "" : "s") + ". No routes were changed.");
+    await refreshDevices();
+  } catch (err) { deviceNotice("Group not saved: " + err.message, true); }
+});
+
+$("group-new").addEventListener("click", () => {
+  editingGroupId = null; selectedDeviceMacs.clear(); $("group-name").value = ""; renderDevices();
+  deviceNotice("Select the devices for a new group.");
+});
+
+$("device-groups").addEventListener("click", async e => {
+  const pauseButton = e.target.closest(".internet-pause,.internet-resume");
+  if (pauseButton) { await requestPause(pauseButton, true); return; }
+  const edit = e.target.closest(".group-edit-members"), remove = e.target.closest(".group-delete"),
+    reservationButton = e.target.closest(".group-reservation-preview"),
+    bestButton = e.target.closest(".group-suggestion-preview");
+  let button = e.target.closest(".group-route-preview");
+  if (edit) {
+    const g = deviceData.groups.find(x => x.id === Number(edit.dataset.id)); if (!g) return;
+    editingGroupId = g.id;
+    selectedDeviceMacs.clear(); g.members.forEach(mac => selectedDeviceMacs.add(mac));
+    $("group-name").value = g.name; renderDevices();
+    $("group-name").scrollIntoView({behavior:"smooth", block:"center"}); return;
+  }
+  if (remove) {
+    const remainingPauseRecords = pauseForGroup(Number(remove.dataset.id));
+    const pauseNote = remainingPauseRecords.length
+      ? ` ${remainingPauseRecords.length} saved Internet pause${remainingPauseRecords.length === 1 ? "" : "s"} will remain active and recoverable under Paused Internet access; review or resume each device there.` : "";
+    if (!confirm("Delete this group? The devices and their current WAN routes will not change." + pauseNote)) return;
+    try { const r = await fetch("/api/device-groups/delete", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id:Number(remove.dataset.id)})});
+      const data = await r.json(); if (!r.ok) throw new Error(data.error || r.status);
+      if (editingGroupId === Number(remove.dataset.id)) { editingGroupId = null; selectedDeviceMacs.clear(); $("group-name").value = ""; }
+      deviceNotice("Group deleted. Device routes were not changed."); await refreshDevices(); }
+    catch (err) { deviceNotice("Group not deleted: " + err.message, true); } return;
+  }
+  if (reservationButton) {
+    reservationButton.disabled = true;
+    try {
+      const response = await fetch("/api/device-groups/reservations/preview", {method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({id:Number(reservationButton.dataset.id)})});
+      const preview = await response.json(); if (!response.ok) throw new Error(preview.error || response.status);
+      $("group-reservation-summary").textContent = `${preview.group}: ${preview.count} ready to reserve` +
+        (preview.skipped ? ` · ${preview.skipped} need attention or a current ER605 lease` : "");
+      $("group-reservation-members").innerHTML = preview.members.map(d =>
+        `<div class="device-row"><div><b>${esc(d.name)}</b><div class="device-meta">${esc(d.ip || "No current lease IP")} · ${esc(d.mac)}</div></div><span>${esc(d.status)}</span></div>`).join("");
+      $("group-reservation-effect").textContent = preview.effect;
+      const dialog = $("group-reservation-dialog"), applyButton = $("group-reservation-apply");
+      applyButton.hidden = !preview.count;
+      const accepted = await new Promise(resolve => { dialog.addEventListener("close", () => resolve(dialog.returnValue === "apply"), {once:true}); dialog.returnValue="cancel"; dialog.showModal(); });
+      if (!accepted || !preview.count) return;
+      const applied = await fetch("/api/device-groups/reservations/apply", {method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({token:preview.token})});
+      const result = await applied.json(); if (!applied.ok) throw new Error(result.error || applied.status);
+      deviceNotice(`Created and verified ${result.count} DHCP reservation${result.count === 1 ? "" : "s"} for ${result.group}. ${result.detail}`);
+      await refreshDevices();
+    } catch (err) { deviceNotice("Group reservations not completed: " + err.message, true); await refreshDevices(); }
+    finally { reservationButton.disabled = false; }
+    return;
+  }
+  if (bestButton) {
+    const card = bestButton.closest(".device-row");
+    const choice = card?.querySelector(".group-route-choice");
+    if (!choice || !["WAN1", "WAN2"].includes(bestButton.dataset.wan)) return;
+    choice.value = bestButton.dataset.wan;
+    button = bestButton;
+  }
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const card = button.closest(".device-row");
+    const r = await fetch("/api/device-groups/route/preview", {method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id:Number(button.dataset.id), route:card.querySelector(".group-route-choice").value,
+        expiry_seconds:Number(card.querySelector(".group-route-duration").value)})});
+    const preview = await r.json(); if (!r.ok) throw new Error(preview.error || r.status);
+    $("group-route-summary").textContent = preview.group + ": " + preview.members.length + " devices → " +
+      (preview.route === "AUTO" ? "Auto balance" : "Prefer " + labelOf(preview.route)) + " (" + preview.expiry_label + ")";
+    $("group-route-members").innerHTML = preview.members.map(d => {
+      const currentExpiry = d.current_expires_at ? ` · until ${deviceDate(d.current_expires_at)}` :
+        (d.current === "WAN1" || d.current === "WAN2" ? " · until changed" : "");
+      const saved = d.saved_current && d.saved_current !== d.current ? ` · saved ${d.saved_current}` : "";
+      return `<div class="device-row"><div><b>${esc(d.name)}</b><div class="device-meta">${esc(d.ip)} · ${esc(d.mac)}</div></div><span>${esc(d.current + currentExpiry + saved)} → ${esc(preview.route)}</span></div>`;
+    }).join("");
+    $("group-route-effect").textContent = preview.effect;
+    const dialog = $("group-route-dialog");
+    const accepted = await new Promise(resolve => { dialog.addEventListener("close", () => resolve(dialog.returnValue === "apply"), {once:true}); dialog.returnValue="cancel"; dialog.showModal(); });
+    if (!accepted) return;
+    const a = await fetch("/api/device-groups/route/apply", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({token:preview.token})});
+    const result = await a.json(); if (!a.ok) throw new Error(result.error || a.status);
+    deviceNotice(`Applied ${result.route} to all ${result.count} devices in ${result.group}. ${result.detail}`); await refreshDevices();
+  } catch (err) { deviceNotice("Group route not changed completely: " + err.message, true); await refreshDevices(); }
+  finally { button.disabled = false; }
+});
+
+$("group-route-cancel").onclick = () => $("group-route-dialog").close("cancel");
+$("group-route-apply").onclick = () => $("group-route-dialog").close("apply");
+$("group-reservation-cancel").onclick = () => $("group-reservation-dialog").close("cancel");
+$("group-reservation-apply").onclick = () => $("group-reservation-dialog").close("apply");
+
+function reviewReservation(preview) {
+  $("reservation-dialog-device").textContent = preview.device || "Home device";
+  $("reservation-dialog-address").textContent = [preview.ip, preview.mac].join(" · ");
+  $("reservation-dialog-effect").textContent = preview.effect;
+  return new Promise(resolve => {
+    const dialog = $("reservation-dialog");
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "apply"), {once: true});
+    dialog.returnValue = "cancel";
+    dialog.showModal();
+  });
+}
+
+$("reservation-cancel").onclick = () => $("reservation-dialog").close("cancel");
+$("reservation-apply").onclick = () => $("reservation-dialog").close("apply");
+
+$("device-search").addEventListener("input", renderDevices);
+$("device-filter").addEventListener("change", renderDevices);
+
+function aclRecoveryText(status) {
+  if (status === "failed") return "Temporary Internet test cleanup needs attention; check the Pi recovery service before another test";
+  if (status === "ok") return "Temporary test recovery: last check passed";
+  if (status === "pending") return "Temporary test recovery check in progress";
+  return "Temporary test recovery status unavailable";
+}
+
+async function refreshPiHealth() {
+  try {
+    const d = await getJSON("/api/system");
+    $("pi-wrap").hidden = !d.enabled;
+    if (!d.enabled) return;
+    const h = d.health;
+    const freshness = h.stale ? ` · stale sample (${duration(h.age_seconds || 0)} old)` : "";
+    const pct = h.disk_free_pct == null ?
+      (h.disk_check_status === "unavailable" ? "unavailable" : "unknown") : `${fmt(h.disk_free_pct, 1)}%`;
+    $("pi-disk").textContent = `Storage: ${pct}${h.disk_free_pct == null ? "" : " free"}${h.disk_low ? " · low space" : ""}${freshness}`;
+    if (h.undervoltage == null) {
+      const powerStatus = h.power_check_status === "tool_missing" ?
+        "vcgencmd not found in the NetPulse service PATH" :
+        h.power_check_status === "command_failed" ? "vcgencmd could not read power status" :
+        h.power_check_status === "unexpected_response" ? "vcgencmd returned an unrecognized response" :
+        "power status is unavailable";
+      $("pi-power").textContent = "Power check unavailable: " + powerStatus;
+    } else if (h.undervoltage) {
+      $("pi-power").textContent = "Power: undervoltage reported now; check the Pi power supply and cable";
+    } else if (h.undervoltage_occurred === true) {
+      $("pi-power").textContent = "Power: undervoltage has occurred since the last Pi reboot; check the power supply and cable";
+    } else if (h.undervoltage_occurred === false) {
+      $("pi-power").textContent = "Power: no undervoltage reported since the last Pi reboot";
+    } else {
+      $("pi-power").textContent = "Power: currently normal; history unavailable";
+    }
+    $("pi-power").textContent += freshness;
+    const limits = [
+      ["arm_frequency_capped", "ARM frequency cap"],
+      ["throttled", "CPU throttling"],
+      ["soft_temp_limit", "soft temperature limit"],
+    ];
+    const activeLimits = limits.filter(([key]) => h[key] === true).map(([, label]) => label);
+    const pastLimits = limits.filter(([key]) => h[key + "_occurred"] === true).map(([, label]) => label);
+    const limitsKnown = limits.every(([key]) => h[key] !== null && h[key] !== undefined);
+    const temperature = Number.isFinite(h.temperature_c) ? ` · SoC ${fmt(h.temperature_c, 1)}°C` : "";
+    $("pi-performance").textContent = (activeLimits.length
+      ? `Performance: ${activeLimits.join(", ")} active; check cooling and workload`
+      : pastLimits.length
+        ? `Performance: ${pastLimits.join(", ")} reported since reboot`
+        : limitsKnown
+          ? "Performance: no frequency cap, throttling, or temperature limit reported since reboot"
+          : "Performance-limit check unavailable on this system") + temperature + freshness;
+    const capacity = [];
+    if (Number.isFinite(h.load_per_core)) capacity.push(`1-minute load ${fmt(h.load_per_core, 2)} per core`);
+    if (Number.isFinite(h.memory_available_pct)) {
+      const memoryMb = Number.isFinite(h.memory_available_mb) ? ` (${fmt(h.memory_available_mb, 0)} MB)` : "";
+      capacity.push(`RAM available ${fmt(h.memory_available_pct, 1)}%${memoryMb}${h.memory_low === true ? " · LOW" : ""}`);
+    }
+    $("pi-capacity").textContent = capacity.length
+      ? capacity.join(" · ") + " · load is scheduling pressure, not CPU usage" + freshness
+      : "Load and memory readings unavailable on this system" + freshness;
+    $("pi-acl-recovery").textContent = aclRecoveryText(h.acl_recovery?.status) + freshness;
+    const b = h.backup;
+    if (!b || !b.enabled) {
+      $("pi-backup").textContent = "Database backups are disabled";
+    } else if (b.status === "unavailable") {
+      $("pi-backup").textContent = "Database backup destination is unavailable";
+    } else if (b.status === "missing") {
+      $("pi-backup").textContent = "No database backup found yet";
+    } else {
+      const age = duration(b.age_seconds || 0);
+      const free = b.free_bytes == null ? "" : ` · ${(b.free_bytes / 1e9).toFixed(1)} GB free`;
+      const stale = b.status === "stale" ? " · overdue" : "";
+      $("pi-backup").textContent = `Latest database backup: ${age} ago${stale} · ${b.count} kept${free}`;
+    }
+  } catch (e) { /* system health is optional */ }
+}
+
+$("devices").addEventListener("click", async e => {
+  const pauseButton = e.target.closest(".internet-pause,.internet-resume");
+  if (pauseButton) { await requestPause(pauseButton, false); return; }
+  const reserveButton = e.target.closest(".device-reserve-preview");
+  if (reserveButton) {
+    reserveButton.disabled = true;
+    try {
+      const previewResponse = await fetch("/api/devices/reservation/preview", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({mac: reserveButton.dataset.mac})});
+      const preview = await previewResponse.json();
+      if (!previewResponse.ok) throw new Error(preview.error || previewResponse.status);
+      const ok = await reviewReservation(preview);
+      if (!ok) return;
+      const applyResponse = await fetch("/api/devices/reservation/apply", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({token: preview.token})});
+      const result = await applyResponse.json();
+      if (!applyResponse.ok) throw new Error(result.error || applyResponse.status);
+      deviceNotice("DHCP reservation verified for " + preview.device + " at " + preview.ip + ". Choose a WAN below and review separately.");
+      await refreshDevices();
+    } catch (err) { deviceNotice("Reservation not changed: " + err.message, true); }
+    finally { reserveButton.disabled = false; }
+    return;
+  }
+  const routeButton = e.target.closest(".device-route-preview");
+  if (routeButton) {
+    const row = routeButton.closest(".device-row"), select = row.querySelector("select[data-mac]");
+    routeButton.disabled = true;
+    try {
+      const previewResponse = await fetch("/api/devices/route/preview", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({mac: routeButton.dataset.mac, route: select.value,
+          expiry_seconds: Number(row.querySelector(".device-route-duration").value)})});
+      const preview = await previewResponse.json();
+      if (!previewResponse.ok) throw new Error(preview.error || previewResponse.status);
+      const ok = await reviewRoute(preview);
+      if (!ok) return;
+      const applyResponse = await fetch("/api/devices/route/apply", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({token: preview.token})});
+      const result = await applyResponse.json();
+      if (!applyResponse.ok) throw new Error(result.error || applyResponse.status);
+      deviceNotice(`Connection preference saved and verified for ${preview.device}. Duration: ${result.expiry_label}. ${result.detail}`);
+      await refreshDevices();
+    } catch (err) { deviceNotice("Route not changed: " + err.message, true); }
+    finally { routeButton.disabled = false; }
+    return;
+  }
+  const button = e.target.closest(".device-rename");
+  if (!button) return;
+  renameMac = button.dataset.mac;
+  $("rename-input").value = button.dataset.current || "";
+  deviceNotice("");
+  $("rename-dialog").showModal();
+});
+
+$("rename-cancel").onclick = () => $("rename-dialog").close();
+$("rename-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const save = $("rename-save");
+  save.disabled = true;
+  try {
+    const r = await fetch("/api/devices/label", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({mac: renameMac, label: $("rename-input").value.trim()})});
+    const result = await r.json();
+    if (!r.ok) throw new Error(result.error || r.status);
+    $("rename-dialog").close();
+    deviceNotice("Device name saved on this Pi.");
+    await refreshDevices();
+  } catch (err) { deviceNotice("Could not save the device name: " + err.message, true); }
+  finally { save.disabled = false; }
+});
+
+/* ---------- live status ---------- */
+async function refreshStatus() {
+  let s;
+  try { s = await getJSON("/api/status"); } catch (e) {
+    $("updated").textContent = "Can't reach NetPulse";
+    return;
+  }
+  lastStatus = s;
+  order = s.wans.map(w => w.name);
+  labels = Object.fromEntries(s.wans.map(w => [w.name, w.label || w.name]));
+  if (!serversReady && s.targets) {
+    serversReady = true;
+    $("server").innerHTML += s.targets.map(t => `<option value="${esc(t)}">${esc(SERVER[t] || t)}</option>`).join("");
+  }
+  const h = s.headline || {level: "UNKNOWN", text: "Collecting data"};
+  $("monitor").dataset.level = h.level;
+  $("verdict").textContent = VERDICT[h.level] || h.level;
+  $("because").textContent = h.text.replace(/^All good: /, "").replace(/^\w/, c => c.toUpperCase()) + ".";
+  $("updated").textContent = s.updated ? "Updated " + clock(s.updated) : "Waiting for the first check…";
+  $("muted").innerHTML = s.muted_until ? `<span class="pill-muted">🔕 Non-critical alerts muted until ${clock(s.muted_until)}</span>` : "";
+  const alertPolicy = s.alert_policy || {};
+  const alertPolicyText = !alertPolicy.telegram_enabled
+    ? "Telegram alerts are disabled. Quiet hours apply only when Telegram alerts are enabled."
+    : alertPolicy.device_activity_notifications === false
+    ? "Device activity alerts off; details available on request. WAN down/recovery alerts always come through."
+    : alertPolicy.quiet_start === alertPolicy.quiet_end
+    ? "Daily quiet hours are off. WAN down/recovery alerts always come through."
+    : `Non-critical alerts, including device notices, are held ${alertPolicy.quiet_start || "?"}–${alertPolicy.quiet_end || "?"} Pi local time. WAN down/recovery alerts always come through; recent DHCP lease changes appear in daily/weekly summaries.`;
+  const suppressed = alertPolicy.suppressed_since_start || {};
+  const delivery = alertPolicy.delivery_since_start;
+  const deliveryText = delivery
+    ? ` Telegram API accepted ${Number(delivery.accepted) || 0} recipient message(s) since service start; ${Number(delivery.queued) || 0} queued, ${Number(delivery.failed) || 0} failed after retries, ${Number(delivery.queue_dropped) || 0} dropped before sending.`
+    : "";
+  const deviceDelivery = delivery && delivery.categories && delivery.categories.device_notice;
+  const deviceHeld = alertPolicy.device_notice_suppressed_since_start || {};
+  const deviceDeliveryText = deviceDelivery && alertPolicy.device_activity_notifications !== false
+    ? ` Device notices: ${Number(deviceDelivery.accepted) || 0} accepted by Telegram, ${Number(deviceDelivery.queued) || 0} queued, ${Number(deviceDelivery.failed) || 0} failed, ${Number(deviceDelivery.queue_dropped) || 0} dropped; ${Number(deviceHeld.mute) || 0} muted, ${Number(deviceHeld.quiet_hours) || 0} held by quiet hours, ${Number(deviceHeld.rate_limited) || 0} rate-limited.`
+    : "";
+  $("alert-policy").textContent = `${alertPolicyText} Suppressed since service start: ${Number(suppressed.mute) || 0} muted · ${Number(suppressed.quiet_hours) || 0} in quiet hours · ${Number(suppressed.rate_limited) || 0} rate-limited. Resets when NetPulse restarts.${deliveryText}${deviceDeliveryText}`;
+  renderISPs(s);
+  renderRouter(s.router, s.wans);
+  drawTraces();
+  $("mode-note").textContent = s.mode === "dry-run"
+    ? "Recommendations only: NetPulse suggests which connection critical devices should use but doesn't change anything on the router yet."
+    : "Monitoring only.";
+}
+
+function renderISPs(s) {
+  const now = Date.now() / 1000;
+  $("isps").innerHTML = s.wans.map(w => {
+    const stateAge = w.state_since == null ? null : now - Number(w.state_since);
+    const since = stateAge != null && Number.isFinite(stateAge) && stateAge >= 0 && w.state !== "UNKNOWN"
+      ? `${STATE_WORD[w.state]} for ${duration(stateAge)}` : "Collecting data";
+    const reasons = w.why || w.reasons || [];
+    const why = reasons.length && w.state !== "HEALTHY" && w.state !== "UNKNOWN"
+      ? `<li>Why: ${esc(reasons.join("; "))}</li>` : "";
+    const errors = w.errors && w.errors.length ? `<li style="color:var(--bad)">${esc(w.errors.join("; "))}</li>` : "";
+    const checkAge = w.connectivity ? now - Number(w.connectivity.checked_at) : NaN;
+    const connectivityFresh = Number.isFinite(checkAge) && checkAge >= 0 && checkAge <= 180;
+    const checkWhen = checkAge < 60 ? "just now" : `${Math.floor(checkAge / 60)}m ago`;
+    const connectivity = w.connectivity && connectivityFresh
+      ? `<li class="soft">DNS/HTTPS check (${checkWhen}): ${esc(w.connectivity.diagnosis)}</li>` : "";
+    const servers = (w.targets || []).map(t =>
+      `<tr><td>${esc(SERVER[t.target] || t.target)}</td><td>${fmt(t.rtt_ms, 1)} ms</td><td>${fmt(t.loss_pct, 1)}% lost</td></tr>`).join("");
+    return `<article class="card isp" style="--c:${colorOf(w.name)}">
+      <div class="isp-head">
+        <div class="isp-name">${esc(labelOf(w.name))}<span>${esc(w.name)}</span></div>
+        <span class="state ${esc(w.state)}">${esc(STATE_WORD[w.state] || w.state)}</span>
+      </div>
+      <div class="big"><b>${fmt(w.rtt_ms)}</b><span>ms · ${esc(speedWord(w))}</span></div>
+      <ul class="facts">
+        <li>${esc(lossWords(w.loss_pct))}</li>
+        ${w.jitter_ms != null ? `<li>${esc(jitterWords(w.jitter_ms))} (${fmt(w.jitter_ms, 1)} ms variation)</li>` : ""}
+        <li class="soft">${esc(since)}</li>
+        ${why}${errors}${connectivity}
+      </ul>
+      <details><summary>Details</summary>
+        <table class="mini">${servers}
+          <tr><td>Quality score</td><td>${fmt(w.score)} / 100</td><td></td></tr>
+          ${w.rtt_ratio ? `<tr><td>vs its usual</td><td>${fmt(w.rtt_ratio, 1)}×</td><td></td></tr>` : ""}
+        </table>
+      </details>
+    </article>`;
+  }).join("");
+}
+
+function renderRouter(r, wans) {
+  if (!r) { $("router-wrap").hidden = true; return; }
+  $("router-wrap").hidden = false;
+  const now = Date.now() / 1000;
+  const rawLinkAge = r.checked_at == null ? NaN : now - Number(r.checked_at);
+  const linkAge = Number.isFinite(rawLinkAge) && rawLinkAge >= 0 ? rawLinkAge : null;
+  const linksFresh = linkAge != null && linkAge <= (r.links_max_age_seconds || 1200);
+  const linkChecked = linkAge == null ? "never checked" : `${duration(linkAge)} ago`;
+  const links = (wans || []).map(w => {
+    const l = (r.links || {})[w.name] || {};
+    const txt = l.up == null ? "status unknown" : `ER605 reports ${l.up ? "Online" : "Offline"}`;
+    const interfaceFlag = l.interface_up == null ? "" : ` · ER605 interface flag ${l.interface_up ? "up" : "down"}`;
+    const ip = l.ip ? ` · ${esc(l.ip)}` : "";
+    const freshness = linksFresh ? linkChecked : `stale · ${linkChecked}`;
+    const color = linksFresh && l.up === false ? "var(--down)" : "inherit";
+    return `<span class="chip" title="Router-reported WAN status; this does not prove physical carrier or end-to-end Internet reachability · ${esc(freshness)}">${esc(labelOf(w.name))} <b style="color:${color}">${txt}</b>${interfaceFlag}${ip} <span class="soft">· ${esc(freshness)}</span></span>`;
+  }).join("");
+  let note = "";
+  if (!r.ok) note = `<div class="note warn">The Pi can't reach the router right now.</div>`;
+  else if (r.paused_until) note = `<div class="note">🛠 Router checks paused until ${clock(r.paused_until)} while you use Omada.</div>`;
+  else if (r.error) note = `<div class="note warn">${esc(r.error)}</div>`;
+  else if (r.checked_at && linkAge != null) note = `<div class="note">Checked ${duration(linkAge)} ago · next check in ${duration(Math.max(0, r.next_check - now))}</div>`;
+  else if (r.checked_at) note = `<div class="note warn">Router sample time is invalid or in the future; status is stale.</div>`;
+  const control = r.control || {};
+  const reviewVersion = control.firmware_review_version;
+  const firmwareReview = control.firmware_review_required ? `<div class="note warn">${esc(control.firmware_reason || control.reason || "Review the ER605 firmware before route controls unlock.")}
+    ${control.configured && reviewVersion && reviewVersion === r.firmware_version ?
+      `<button id="firmware-accept" type="button">I reviewed firmware ${esc(reviewVersion)} · unlock route controls</button>` : ""}</div>` : "";
+  const pauseLabel = r.paused_until ? "Extend pause for 30 minutes" : "Pause router checks for 30 minutes";
+  const uptimeAge = r.uptime_at == null ? 0 : now - Number(r.uptime_at);
+  const up = r.uptime != null && Number.isFinite(uptimeAge) && uptimeAge >= 0
+    ? duration(r.uptime + uptimeAge) : "unknown";
+  $("router").innerHTML = `
+    <span class="name"><span class="dot ${r.ok ? "" : "off"}"></span>${esc(r.model || "ER605")}</span>
+    ${r.firmware_version ? `<span class="chip">Firmware <b>${esc(r.firmware_version)}</b></span>` : ""}
+    <span class="chip">Running for <b>${up}</b></span>
+    ${r.cpu_pct != null ? `<span class="chip">CPU <b>${fmt(r.cpu_pct)}%</b></span>` : ""}
+    ${r.mem_pct != null ? `<span class="chip">Memory <b>${fmt(r.mem_pct)}%</b></span>` : ""}
+    ${r.clients != null ? `<span class="chip"><b>${r.clients}</b> devices</span>` : ""}
+    ${links}${note}${firmwareReview}<div class="router-pause"><button id="router-pause" type="button">${pauseLabel}</button>
+      ${r.paused_until ? `<button id="router-resume" type="button">Resume router checks now</button>` : ""}
+      <span class="soft">Pausing waits for any current check to finish. Device data will become stale and route controls will lock until checks resume.</span></div>`;
+}
+
+$("router").addEventListener("click", async e => {
+  const button = e.target.closest("#router-pause, #router-resume, #firmware-accept"); if (!button) return;
+  if (button.id === "firmware-accept") {
+    const version = lastStatus?.router?.firmware_version;
+    if (!version || !window.confirm(`I reviewed the ER605 firmware version ${version} and want to unlock NetPulse route controls for this version. Continue?`)) return;
+    button.disabled = true; button.textContent = "Saving firmware review…";
+    try {
+      const response = await fetch("/api/router/firmware/accept", {method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({confirmed:true, firmware_version:version})});
+      const result = await response.json(); if (!response.ok) throw new Error(result.error || response.status);
+      await refreshStatus();
+      deviceNotice(`Firmware ${version} reviewed. NetPulse route controls can unlock when other readiness checks pass.`);
+    } catch (err) {
+      deviceNotice("Could not save the firmware review: " + err.message, true);
+      button.disabled = false; button.textContent = `I reviewed firmware ${version} · unlock route controls`;
+    }
+    return;
+  }
+  const resuming = button.id === "router-resume";
+  if (resuming && !window.confirm("Resume router checks now? NetPulse will log into the ER605 on its next check and may end your Omada browser session.")) return;
+  button.disabled = true; button.textContent = resuming ? "Resuming checks…" : "Waiting for current check…";
+  try {
+    const r = await fetch(resuming ? "/api/router/resume" : "/api/router/pause", {method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(resuming ? {confirmed:true} : {seconds:1800})});
+    const result = await r.json(); if (!r.ok) throw new Error(result.error || r.status);
+    await refreshStatus();
+    deviceNotice(resuming ? "Router checks resumed. NetPulse will check the ER605 shortly." : "Router checks paused for 30 minutes. You can now use the Omada page without NetPulse starting another router login.");
+  } catch (err) {
+    deviceNotice(`Could not ${resuming ? "resume" : "pause"} router checks: ` + err.message, true);
+    button.disabled = false; button.textContent = resuming ? "Resume router checks now" : (lastStatus?.router?.paused_until ? "Extend pause for 30 minutes" : "Pause router checks for 30 minutes");
+  }
+});
+
+/* ---------- hero traces: last hour, like a monitor ---------- */
+let traceData = null;
+async function refreshTraces() {
+  try { traceData = await getJSON("/api/history?hours=1"); } catch (e) { return; }
+  drawTraces();
+}
+function drawTraces() {
+  if (!lastStatus) return;
+  const W = 600, H = 42;
+  $("traces").innerHTML = lastStatus.wans.map(w => {
+    const pts = ((traceData && traceData.points) || []).filter(p => p.wan === w.name && p.rtt_ms != null);
+    if (w.rtt_ms != null) pts.push({ts: lastStatus.updated, rtt_ms: w.rtt_ms});
+    let path = "", end = null;
+    if (pts.length > 1) {
+      const t0 = lastStatus.updated - 3600, vals = pts.map(p => p.rtt_ms);
+      const lo = Math.min(...vals), hi = Math.max(...vals), span = Math.max(hi - lo, 25);
+      const x = t => Math.max(0, (t - t0) / 3600) * W;
+      const y = v => H - 4 - (v - lo) / span * (H - 12);
+      path = pts.map((p, i) => `${i ? "L" : "M"}${x(p.ts).toFixed(1)},${y(p.rtt_ms).toFixed(1)}`).join("");
+      end = [x(pts[pts.length - 1].ts), y(pts[pts.length - 1].rtt_ms)];
+    }
+    const c = colorOf(w.name);
+    return `<div class="trace">
+      <span class="who"><i style="background:${c}"></i>${esc(labelOf(w.name))}</span>
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <line x1="0" x2="${W}" y1="${H - 4}" y2="${H - 4}" stroke="rgba(255,255,255,.18)"/>
+        ${path ? `<path d="${path}" fill="none" stroke="rgba(255,255,255,.92)" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>` : ""}
+        ${end ? `<circle class="blip" cx="${end[0]}" cy="${end[1]}" r="4" fill="${c}"/><circle cx="${end[0]}" cy="${end[1]}" r="3.5" fill="${c}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>` : ""}
+      </svg>
+      <span class="now">${w.rtt_ms == null ? "—" : fmt(w.rtt_ms)}<small>ms</small></span>
+    </div>`;
+  }).join("");
+}
+
+/* ---------- history ---------- */
+async function refreshHistory() {
+  let h;
+  try { h = await getJSON(`/api/history?hours=${hours}&target=${encodeURIComponent(server)}`); } catch (e) { return; }
+  const names = order.length ? order : [...new Set(h.points.map(p => p.wan))];
+  $("legend").innerHTML = names.map(n => `<span><i style="background:${colorOf(n)}"></i>${esc(labelOf(n))}</span>`).join("");
+  drawChart(names.map(wan => ({wan, points: h.points.filter(p => p.wan === wan)})), h.bucket);
+  $("chart-note").textContent = metric === "rtt_ms" ? "Lower is better" : "Lower is better · 0% is perfect";
+  $("totals").innerHTML = names.map(wan => {
+    const m = h.state_minutes[wan] || {}, total = Object.values(m).reduce((a, b) => a + b, 0);
+    if (!total) return "";
+    const pct = n => (100 * n / total).toFixed(1) + "%";
+    const bits = [["DEGRADED", "slow"], ["BAD", "bad"], ["OFFLINE", "down"]].filter(([k]) => m[k]).map(([k, w]) => `${w} ${duration(m[k] * 60)}`);
+    return `<div class="total" style="--c:${colorOf(wan)}"><b>${esc(labelOf(wan))}</b>
+      Online ${pct(total - (m.OFFLINE || 0))} · healthy ${pct(m.HEALTHY || 0)}
+      <div class="soft">${bits.length ? bits.join(" · ") : "No problems in this period"}</div></div>`;
+  }).join("");
+}
+
+function drawChart(series, bucket) {
+  const svg = $("chart"), W = svg.clientWidth || 800, H = 220, L = 38, R = 10, T = 10, B = 24, key = metric;
+  const all = series.flatMap(s => s.points.filter(p => p[key] != null));
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  if (!all.length) { svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" fill="${css("--soft")}" font-size="14">No history yet: check back in a few minutes</text>`; return; }
+  const t0 = Math.min(...all.map(p => p.ts)), t1 = Math.max(Math.max(...all.map(p => p.ts)), t0 + 60);
+  let vmax = Math.max(...all.map(p => p[key]));
+  vmax = key === "loss_pct" ? Math.max(5, Math.ceil(vmax / 5) * 5) : Math.max(20, Math.ceil(vmax / 20) * 20);
+  const x = t => L + (W - L - R) * (t - t0) / (t1 - t0), y = v => T + (H - T - B) * (1 - v / vmax);
+  const muted = css("--soft"), line = css("--line");
+  let g = [0, .5, 1].map(f => `<line x1="${L}" x2="${W - R}" y1="${y(vmax * f)}" y2="${y(vmax * f)}" stroke="${line}"/>
+    <text x="${L - 6}" y="${y(vmax * f) + 4}" text-anchor="end" font-size="11" fill="${muted}" font-family="${css("--mono")}">${fmt(vmax * f)}</text>`).join("");
+  g += `<text x="${L}" y="${H - 6}" font-size="11" fill="${muted}">${when(t0)}</text><text x="${W - R}" y="${H - 6}" text-anchor="end" font-size="11" fill="${muted}">${when(t1)}</text>`;
+  const lines = series.map(s => {
+    let d = "", prev = null;
+    for (const p of s.points) {
+      if (p[key] == null) { prev = null; continue; }
+      d += `${!prev || p.ts - prev.ts > bucket * 2.5 ? "M" : "L"}${x(p.ts).toFixed(1)},${y(p[key]).toFixed(1)}`;
+      prev = p;
+    }
+    const pts = s.points.filter(p => p[key] != null);
+    const dots = pts.length <= 90 ? pts.map(p => `<circle cx="${x(p.ts).toFixed(1)}" cy="${y(p[key]).toFixed(1)}" r="2.2" fill="${colorOf(s.wan)}"/>`).join("") : "";
+    return `<path d="${d}" fill="none" stroke="${colorOf(s.wan)}" stroke-width="2" stroke-linejoin="round"/>${dots}`;
+  }).join("");
+  svg.innerHTML = g + lines + `<line id="cursor" y1="${T}" y2="${H - B}" stroke="${muted}" stroke-dasharray="3 3" visibility="hidden"/>`;
+  const tip = $("tip"), cursor = svg.querySelector("#cursor"), unit = key === "rtt_ms" ? "ms" : "% lost";
+  svg.onpointermove = ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * W / r.width;
+    const t = Math.round((t0 + (px - L) / (W - L - R) * (t1 - t0)) / bucket) * bucket;
+    const rows = series.map(s => {
+      let best = null; for (const p of s.points) if (!best || Math.abs(p.ts - t) < Math.abs(best.ts - t)) best = p;
+      return best && best[key] != null ? `${esc(labelOf(s.wan))}: ${fmt(best[key], key === "rtt_ms" ? 0 : 1)} ${unit}` : null;
+    }).filter(Boolean);
+    cursor.setAttribute("x1", x(t)); cursor.setAttribute("x2", x(t)); cursor.setAttribute("visibility", "visible");
+    tip.innerHTML = `${when(t)}<br>${rows.join("<br>")}`;
+    tip.style.display = "block";
+    tip.style.left = Math.min(Math.max(ev.clientX - r.left + 12, 0), r.width - 160) + "px";
+  };
+  svg.onpointerleave = () => { tip.style.display = "none"; cursor.setAttribute("visibility", "hidden"); };
+}
+
+/* ---------- events, in plain words ---------- */
+const EVENT_WORDS = {
+  HEALTHY: ["🟢", "is healthy again"], DEGRADED: ["🟡", "got slow"], BAD: ["🟠", "is having trouble"],
+  OFFLINE: ["🔴", "went down"], UNKNOWN: ["⚪", "is being checked"],
+};
+function eventText(e) {
+  const m = e.message.match(/^(.*?):\s*(\w+)\s*->\s*(\w+)/);
+  if (e.kind === "state" && m) {
+    const [icon, words] = EVENT_WORDS[m[3]] || ["•", m[3].toLowerCase()];
+    const sev = {UNKNOWN: 0, HEALTHY: 1, DEGRADED: 2, BAD: 3, OFFLINE: 4};
+    if (m[2] === "UNKNOWN") return ["▶️", `Started watching ${labelOf(e.wan)}`];
+    if (m[2] === "OFFLINE") return ["✅", `${labelOf(e.wan)} is back online`];
+    if (m[3] !== "HEALTHY" && sev[m[3]] < sev[m[2]]) return ["↗️", `${labelOf(e.wan)} is improving`];
+    return [icon, `${labelOf(e.wan)} ${words}`];
+  }
+  if (e.kind === "decision") {
+    const t = e.message.match(/->\s*(.*?):/);
+    return ["🔀", `Would move critical devices to ${t ? t[1].replace(/\s*\(.*\)/, "") : "the other connection"} (recommendation only)`];
+  }
+  if (e.kind === "router") return ["🛜", e.message.replace(/^(\w+):/, "$1:")];
+  if (e.kind === "speedtest") return ["⚡", e.message.replace(/\s*\(WAN\d\)/, "").replace(/(\d+) down \/ (\d+) up Mbps/, "⬇ $1 · ⬆ $2 Mbps")];
+  if (e.kind === "device") return ["📱", e.message];
+  if (e.kind === "device_presence") {
+    return e.message.startsWith("Device stopped replying") ? ["📡", e.message] : ["🟢", e.message];
+  }
+  if (e.kind === "router_route") {
+    return e.message.startsWith("Route rule drift") ? ["⚠️", e.message] : ["✅", e.message];
+  }
+  if (e.kind === "system") return ["🩺", e.message];
+  if (e.kind === "connectivity") return ["🔎", e.message];
+  return ["•", e.message];
+}
+let eventLimit = 8;
+async function refreshEvents() {
+  let ev;
+  try { ev = await getJSON("/api/events?limit=60"); } catch (e) { return; }
+  // Hide the noise of service restarts ("Started watching") unless that's all there is.
+  const shown = ev.filter(e => !(e.kind === "state" && /UNKNOWN\s*->/.test(e.message)));
+  const list = shown.length ? shown : ev;
+  $("events").innerHTML = list.length
+    ? list.slice(0, eventLimit).map(e => { const [i, t] = eventText(e); return `<li><span>${i}</span><span>${esc(t)}</span><time>${when(e.ts)}</time></li>`; }).join("")
+    : `<li><span>✨</span><span class="soft">Nothing yet. Changes to your connections will show up here.</span><span></span></li>`;
+  $("more").hidden = list.length <= eventLimit;
+}
+$("more").onclick = () => { eventLimit += 20; refreshEvents(); };
+
+function recommendationSample(item, checkpoint) {
+  if (!checkpoint) return "No paired WAN sample yet";
+  const source = `${labelOf(item.source)} ${checkpoint.source_state || "unknown"}` +
+    (checkpoint.source_score == null ? "" : ` (${fmt(checkpoint.source_score, 1)})`);
+  const target = `${labelOf(item.target)} ${checkpoint.target_state || "unknown"}` +
+    (checkpoint.target_score == null ? "" : ` (${fmt(checkpoint.target_score, 1)})`);
+  const difference = checkpoint.target_minus_source_score == null ? "score difference unavailable" :
+    `${labelOf(item.target)} minus ${labelOf(item.source)} ${fmt(checkpoint.target_minus_source_score, 1)} points`;
+  return `${source}; ${target}; ${difference}; samples within ${checkpoint.sample_offset_seconds}s of checkpoint`;
+}
+
+async function refreshDecisionReview() {
+  let review;
+  try { review = await getJSON("/api/decisions?days=7"); }
+  catch (e) {
+    $("decision-review-note").textContent = "Recent recommendations could not be loaded.";
+    $("decision-review").innerHTML = "";
+    return;
+  }
+  const suggestions = review.recommendations || [];
+  $("decision-review-note").textContent = review.total
+    ? `${review.total} monitor-only suggestion${review.total === 1 ? "" : "s"} in the last 7 days. These are observations, not applied route changes.`
+    : "No monitor-only suggestions were recorded in the last 7 days. No route changes were made.";
+  const rows = suggestions.slice().reverse().map(item => {
+    const source = item.source ? labelOf(item.source) : "current WAN unknown";
+    const target = item.target ? labelOf(item.target) : "target WAN unknown";
+    const trigger = item.kind === "outage failover" ? "outage suggestion" :
+      item.kind === "sustained quality advantage" ? "sustained quality suggestion" : "trigger details unavailable";
+    let details = "WAN health at suggestion unavailable";
+    if (item.source_state && item.target_state) {
+      details = `${source} ${item.source_state}${item.source_score == null ? "" : ` (${fmt(item.source_score, 1)})`}; ` +
+        `${target} ${item.target_state}${item.target_score == null ? "" : ` (${fmt(item.target_score, 1)})`}; ` +
+        `samples ${item.metrics_age_seconds}s before suggestion`;
+    }
+    const checkpoints = (item.follow_up || []).map(point => {
+      const minutes = Math.round(point?.after_seconds / 60) || "?";
+      return `<li>About ${minutes} minutes later: ${esc(recommendationSample(item, point))}</li>`;
+    }).join("");
+    const heading = item.source && item.target ? `Prefer ${target} over ${source}` : "WAN suggestion";
+    return `<li><span>🔀</span><div><b>${esc(heading)}</b> · ${esc(trigger)}<br><span class="soft">${esc(details)}</span>` +
+      `${checkpoints ? `<ul class="facts">${checkpoints}</ul>` : ""}</div><time>${when(item.ts)}</time></li>`;
+  });
+  if (review.omitted_recommendations) {
+    rows.push(`<li><span>…</span><span class="soft">${review.omitted_recommendations} older suggestions are omitted from this view.</span><span></span></li>`);
+  }
+  $("decision-review").innerHTML = rows.length ? rows.join("") :
+    `<li><span>🔀</span><span class="soft">No suggestions to review yet. Recommendations never change router settings.</span><span></span></li>`;
+}
+
+/* ---------- speed tests ---------- */
+let speedPoll = null;
+async function refreshSpeed() {
+  let d;
+  try { d = await getJSON("/api/speedtests?days=30"); } catch (e) { return; }
+  const btn = $("run-speed");
+  const u = d.data_usage;
+  const budgetReached = u && u.budget_enabled && u.used_mb + u.next_run_mb > u.budget_mb;
+  btn.disabled = d.running || budgetReached;
+  btn.textContent = d.running ? "Testing… (about a minute)" : budgetReached ? "Monthly budget reached" : "Run speed test";
+  if (d.data_usage) {
+    const used = fmt(u.used_mb, 0), next = fmt(u.next_run_mb, 0);
+    $("speed-note").textContent = u.budget_enabled
+      ? `Speed-test payload this month: about ${used} / ${fmt(u.budget_mb, 0)} MB. A full two-WAN run uses about ${next} MB; it will be skipped if that would exceed the cap.`
+      : `A full two-WAN speed test uses about ${next} MB of payload. Monthly data cap is off; configure speedtest.monthly_budget_mb to set one.`;
+  }
+  if (d.running && !speedPoll) speedPoll = setInterval(refreshSpeed, 5000);
+  if (!d.running && speedPoll) { clearInterval(speedPoll); speedPoll = null; }
+  const names = order.length ? order : [...new Set(d.results.map(r => r.wan))];
+  $("speeds").innerHTML = names.map(wan => {
+    const mine = d.results.filter(r => r.wan === wan);
+    const ok = mine.filter(r => !r.error && r.down_mbps != null);
+    const last = mine[mine.length - 1];
+    const usual = d.usual[wan];
+    let body;
+    if (!last) body = `<p class="soft">No speed tests yet. Tap “Run speed test”.</p>`;
+    else if (last.error) body = `<p class="dip">Last test failed: ${esc(last.error)}</p>`;
+    else {
+      const bloat = last.loaded_ms != null && last.idle_ms != null ? Math.max(0, last.loaded_ms - last.idle_ms) : null;
+      const dip = usual && last.down_mbps < usual * 0.5;
+      body = `<div class="speed-nums">
+          <div><b>${fmt(last.down_mbps)}</b> <span>Mbps down</span></div>
+          <div><b>${fmt(last.up_mbps)}</b> <span>Mbps up</span></div></div>
+        <ul class="facts">
+          ${bloat != null ? `<li>${bloat < 20 ? "No extra lag when the line is busy" : `+${fmt(bloat)} ms lag when the line is busy`}</li>` : ""}
+          ${usual ? `<li class="${dip ? "dip" : ""}">${dip ? `Much slower than usual (normally about ${fmt(usual)} Mbps)` : `Normally about ${fmt(usual)} Mbps`}</li>` : ""}
+          <li class="soft">Tested ${when(last.ts)}</li>
+        </ul>`;
+    }
+    // Sparkline of downloads over 30 days; dips in red.
+    let spark = "";
+    if (ok.length > 1) {
+      const W = 300, H = 46, t0 = ok[0].ts, t1 = ok[ok.length - 1].ts || t0 + 1, vmax = Math.max(...ok.map(r => r.down_mbps), 1);
+      const x = t => (t - t0) / Math.max(1, t1 - t0) * (W - 8) + 4, y = v => H - 4 - v / vmax * (H - 10);
+      const path = ok.map((r, i) => `${i ? "L" : "M"}${x(r.ts).toFixed(1)},${y(r.down_mbps).toFixed(1)}`).join("");
+      const dots = ok.map(r => `<circle cx="${x(r.ts).toFixed(1)}" cy="${y(r.down_mbps).toFixed(1)}" r="2.5" fill="${usual && r.down_mbps < usual * 0.5 ? css("--bad") : colorOf(wan)}"/>`).join("");
+      spark = `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Download speed over the last 30 days">
+        <path d="${path}" fill="none" stroke="${colorOf(wan)}" stroke-width="1.5" vector-effect="non-scaling-stroke" opacity=".6"/>${dots}</svg>
+        <div class="soft" style="font-size:12px">${ok.length} tests in 30 days · lowest ${fmt(Math.min(...ok.map(r => r.down_mbps)))} Mbps</div>`;
+    }
+    return `<article class="card isp" style="--c:${colorOf(wan)}">
+      <div class="isp-head"><div class="isp-name">${esc(labelOf(wan))}${d.plans[wan] ? `<span>${fmt(d.plans[wan])} Mbps plan</span>` : ""}</div></div>
+      ${body}${spark}</article>`;
+  }).join("");
+}
+$("run-speed").onclick = async () => {
+  $("run-speed").disabled = true;
+  try {
+    const r = await fetch("/api/speedtest", {method: "POST"});
+    const j = await r.json();
+    if (!j.started) alert(j.reason || "Couldn't start a speed test.");
+  } catch (e) { alert("Couldn't reach NetPulse."); }
+  refreshSpeed();
+};
+
+/* ---------- controls ---------- */
+function segment(id, attr, set) {
+  $(id).onclick = ev => {
+    const b = ev.target.closest("button"); if (!b) return;
+    for (const x of $(id).querySelectorAll("button")) x.setAttribute("aria-pressed", x === b);
+    set(b.dataset[attr]); refreshHistory();
+  };
+}
+segment("metric", "m", v => metric = v);
+segment("range", "h", v => hours = Number(v));
+$("server").onchange = e => { server = e.target.value; refreshHistory(); };
+let resizeTimer; window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(refreshHistory, 150); });
+
+refreshStatus().then(() => { refreshDevices(); refreshPiHealth(); refreshTraces(); refreshHistory(); refreshEvents(); refreshDecisionReview(); refreshSpeed(); });
+setInterval(refreshStatus, 10000);
+setInterval(() => { refreshDevices(); refreshPiHealth(); refreshTraces(); refreshHistory(); refreshEvents(); refreshDecisionReview(); refreshSpeed(); }, 60000);
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+[project]
+name = "netpulse"
+version = "0.1.0"
+description = "Dual-WAN quality monitor for a TP-Link ER605, running on a Raspberry Pi"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+ha-validation = [
+    "Jinja2>=3.1,<4",
+    "PyYAML>=6.0,<7",
+]
+
+[project.scripts]
+netpulse = "netpulse.main:run"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["netpulse*"]
+
+[tool.setuptools.package-data]
+"netpulse.web" = ["static/*"]

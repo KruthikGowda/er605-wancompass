@@ -1,0 +1,8 @@
+🟢 All good: both connections are healthy
+
+🟢 Example ISP A: 7 ms · no packet loss
+🟢 Example ISP B: 7 ms · no packet loss
+
+Telegram alerts are disabled.
+
+Updated 12:09:50

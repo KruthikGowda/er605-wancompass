@@ -1,0 +1,25 @@
+[Unit]
+Description=Recover an interrupted NetPulse temporary ACL test
+Wants=network-online.target
+After=network-online.target
+Before=netpulse.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+SupplementaryGroups=netpulse
+WorkingDirectory=/opt/netpulse
+Environment=PYTHONPATH=/opt/netpulse
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -B /opt/netpulse/tools/router_acl_pilot.py --recover-on-boot
+TimeoutStartSec=60
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=-/var/lib/netpulse
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=

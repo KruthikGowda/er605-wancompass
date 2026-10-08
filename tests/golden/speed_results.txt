@@ -1,0 +1,7 @@
+⚡ Speed test results
+
+⚡ Example ISP A: ⬇ 190 Mbps · ⬆ 95 Mbps · no extra lag when busy
+   usual ⬇ 200 Mbps
+⚡ Example ISP B: ⬇ 95 Mbps · ⬆ 48 Mbps · no extra lag when busy
+
+Speeds above what the Pi can handle (about 220 Mbps) show as about that.

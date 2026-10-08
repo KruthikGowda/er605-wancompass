@@ -1,0 +1,55 @@
+# Shape of the config written by the very first install (WAN Pilot era, 2026-09-24),
+# then migrated to /etc/netpulse with the db_path updated. No [router], [speedtest],
+# plan_mbps, quiet hours or digest settings existed yet.
+
+[general]
+mode = "dry-run"
+interval_seconds = 10       # one probe cycle per WAN every 10 s
+window_seconds = 300        # rolling window used for health (5 min)
+db_path = "/var/lib/netpulse/netpulse.db"
+preferred_wan = "WAN2"      # starting point for dry-run recommendations
+
+[probe]
+targets = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+count = 5
+packet_interval = 0.2
+timeout_seconds = 1
+
+[[wan]]
+name = "WAN1"
+label = "Example ISP A"            # WAN1 = 200 Mbps
+source_ip = "192.168.0.201"
+
+[[wan]]
+name = "WAN2"
+label = "Example ISP B"         # WAN2 = 300 Mbps
+source_ip = "192.168.0.202"
+
+[thresholds]
+degraded_loss_pct = 5
+bad_loss_pct = 15
+degraded_rtt_ms = 120
+bad_rtt_ms = 250
+degraded_jitter_ms = 30
+degraded_rtt_factor = 2.5
+bad_rtt_factor = 4.0
+min_rtt_increase_ms = 20
+offline_cycles = 3
+
+[decision]
+min_score_advantage = 15
+hold_seconds = 180
+cooldown_seconds = 600
+recovery_seconds = 600
+
+[web]
+host = "0.0.0.0"
+port = 8080
+
+[telegram]
+enabled = true
+bot_token = "123456789:AAtest-token-for-fixtures-only-xxxxxxxxxx"
+chat_id = "111"
+
+[router]
+enabled = true

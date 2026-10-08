@@ -1,0 +1,14 @@
+NetPulse watches your two internet connections.
+
+📶 Status: how both connections are doing right now
+🩺 Pi health: storage, backups, memory, power, and performance readings
+📈 Last 24h: summary of the last day
+📊 Last 7d: summary of the last week
+⚡ Speed test: measure both connections now (about a minute)
+🔕 Mute 1h: pause non-critical alerts for an hour
+🔔 Unmute: alerts back on
+🛠 Using Omada: pause NetPulse's router checks for 30 min, so it doesn't log you out of the Omada web page (the ER605 allows one login at a time)
+
+Quiet hours and mute hold non-critical alerts. Device join/leave and LAN-ping alerts are off by default; set telegram.device_activity_notifications = true to enable them. Use /devices or /device MAC-or-name when you want device details. Recent DHCP lease changes appear in on-demand /today and /week reports; other held alerts stay in history. WAN down/back-up alerts always come through, even when muted or at night.
+
+Owner only: /devices lists the current device inventory; /device MAC-or-name shows one device. /reserve lists devices; /reserve MAC-or-name previews a DHCP reservation and /reserve_confirm TOKEN creates the reviewed reservation. /route lists devices and /route MAC-or-name WAN1|WAN2|AUTO [1h|6h|24h|7d|forever] previews a route; /route_confirm TOKEN applies it. /device MAC-or-name shows router listing, reservation, last-seen, optional LAN ping evidence, group, and saved WAN preference details. /groups lists named device groups; /group_reserve exact group name previews DHCP reservations for all unreserved members, then /group_reserve_confirm TOKEN creates the reviewed batch. /group_suggest exact group name previews the stable monitor-only WAN suggestion; /group_smart exact group name on|off opts a group into or out of stable automatic WAN steering; /group_route exact group name WAN1|WAN2|AUTO [1h|6h|24h|7d|forever] previews one group change, and /group_confirm TOKEN applies it to every eligible member. Omitted route duration defaults to 1 hour; use forever to keep a WAN pin until changed. Internet access controls are review-first: /pause <MAC or exact device name> [15m|1h|6h|until-resumed], /resume <MAC or exact device name>, /group_pause <exact group name> [duration], /group_resume <exact group name>, /paused, then /pause_confirm TOKEN. /invite lets someone join (2 minutes, you approve them), /close stops it early, /people shows who has access.

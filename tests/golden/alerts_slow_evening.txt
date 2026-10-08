@@ -1,0 +1,7 @@
+🟡 Example ISP A is slow
+7 ms, 5% loss, jitter 1 ms
+why: 5% of packets lost
+Example ISP B is healthy
+---
+🟢 Example ISP A is healthy again (was bad for 22 min)
+Example ISP B is healthy

@@ -1,0 +1,13 @@
+☀️ NetPulse daily summary (21 Sep)
+
+🟠 Example ISP A (WAN1)
+   online 100.0% · healthy 85.8%
+   typical latency 10 ms · avg loss 1.8%
+   problems: slow 17 min
+   worst hour 07:00: 13 ms, 3.5% loss
+
+🟢 Example ISP B (WAN2)
+   online 100.0% · healthy 100.0%
+   typical latency 7 ms · avg loss 0.0%
+
+👉 Example ISP B was the more reliable connection.
