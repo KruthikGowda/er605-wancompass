@@ -3,10 +3,11 @@
 ## Getting started
 
 1. [README](../README.md): project summary and quick links.
-2. [Setup](SETUP.md): install prerequisites, clone the public repository, choose probe IPs, configure WAN-only measurement routes, verify paths, install, and upgrade.
-3. [Configuration](CONFIGURATION.md): configuration sections, actual defaults, private files, and feature opt-ins.
-4. [Telegram](TELEGRAM.md): create your own bot and authorize your own private chat.
-5. [Troubleshooting](TROUBLESHOOTING.md): safe checks for service, WAN probes, dashboard, router, Telegram, and backups.
+2. [Requirements](REQUIREMENTS.md): practical host recommendation, verified platform boundaries, and required/optional prerequisites.
+3. [Setup](SETUP.md): install prerequisites, clone the public repository, choose probe IPs, configure WAN-only measurement routes, verify paths, install, and upgrade.
+4. [Configuration](CONFIGURATION.md): configuration sections, actual defaults, private files, and feature opt-ins.
+5. [Telegram](TELEGRAM.md): create your own bot and authorize your own private chat.
+6. [Troubleshooting](TROUBLESHOOTING.md): safe checks for service, WAN probes, dashboard, router, Telegram, and backups.
 
 ## Features and operations
 

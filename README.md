@@ -10,7 +10,7 @@ Follow the [setup guide](docs/SETUP.md) to install prerequisites, clone the repo
 
 ```sh
 sudo apt update
-sudo apt install -y git python3
+sudo apt install -y git python3 iproute2 iputils-ping curl traceroute
 git clone https://github.com/KruthikGowda/er605-wancompass.git ~/wancompass
 cd ~/wancompass
 cp config.example.toml config.toml
@@ -20,7 +20,7 @@ sudo env NETPULSE_CONFIG_SOURCE="$PWD/config.toml" bash scripts/install.sh
 
 Replace all example addresses with free addresses in your own LAN. Complete the policy-route setup and verify both WAN paths before relying on the readings.
 
-See [configuration](docs/CONFIGURATION.md), [Telegram setup](docs/TELEGRAM.md), [troubleshooting](docs/TROUBLESHOOTING.md), and the [documentation index](docs/index.md) for complete guides.
+See [requirements](docs/REQUIREMENTS.md) for the practical host baseline and prerequisites, plus [configuration](docs/CONFIGURATION.md), [Telegram setup](docs/TELEGRAM.md), [troubleshooting](docs/TROUBLESHOOTING.md), and the [documentation index](docs/index.md) for complete guides.
 
 ## What it does
 

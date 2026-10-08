@@ -1,6 +1,6 @@
 # Setup guide
 
-Install WANCompass on a Raspberry Pi running Raspberry Pi OS or Debian 12/13. Python 3.11 or newer is required. The probe-address helper expects a wired NetworkManager interface named `eth0`; adapt networking for another host or network manager.
+Install WANCompass on a Raspberry Pi running Raspberry Pi OS or Debian 12/13. Python 3.11 or newer is required. See [Requirements](REQUIREMENTS.md) for the practical hardware baseline and full prerequisites. The probe-address helper expects a wired NetworkManager interface named `eth0`; adapt networking for another host or network manager.
 
 The public project name does not change compatible installed identifiers: the Python package, systemd service, and configuration paths remain `netpulse` and `/etc/netpulse`.
 
@@ -10,12 +10,12 @@ On the Linux host:
 
 ```sh
 sudo apt update
-sudo apt install -y git python3 curl traceroute
+sudo apt install -y git python3 iproute2 iputils-ping curl traceroute
 git clone https://github.com/KruthikGowda/er605-wancompass.git ~/wancompass
 cd ~/wancompass
 ```
 
-The installer adds `curl` and `traceroute` for path verification. The runtime uses the Python standard library.
+Use an OS with Bash and systemd already available. The installer adds `curl` and `traceroute` for path verification. The runtime uses the Python standard library.
 
 ## 2. Choose two probe addresses
 
@@ -27,7 +27,7 @@ The examples below use documentation-only addresses. Replace them with free addr
 
 ```text
 WAN1 probe: 192.0.2.10
-WAN2 probe: 198.51.100.10
+WAN2 probe: 192.0.2.11
 ```
 
 The `[[wan]]` source IP values in your config must match the addresses you choose.
@@ -49,9 +49,11 @@ Do not add Telegram or router credentials to this file. Telegram setup writes it
 
 From the repository directory on the host:
 
+The helper requires an existing NetworkManager-managed `eth0` connection (`nmcli`). If your host uses a different network manager, configure aliases with that manager instead; installing NetworkManager alone does not make the helper compatible with an existing configuration.
+
 ```sh
 chmod +x scripts/*.sh tools/*.sh
-sudo ./scripts/setup-probe-ips.sh 192.0.2.10 198.51.100.10
+sudo ./scripts/setup-probe-ips.sh 192.0.2.10 192.0.2.11
 ```
 
 Replace both example addresses. The helper derives the prefix from the first IPv4 address on `eth0`, adds addresses through the active NetworkManager connection, and reapplies it. Confirm the output preserves the normal management address and shows both probes. For another interface or network manager, configure aliases using its normal tooling.
@@ -74,7 +76,7 @@ This measurement route differs from a device route using ER605 `Priority` mode. 
 Run the verifier with your addresses:
 
 ```sh
-./tools/verify_paths.sh 192.0.2.10 198.51.100.10
+./tools/verify_paths.sh 192.0.2.10 192.0.2.11
 ```
 
 It checks source-bound HTTPS egress and passes when the addresses show different public IPs. Run it several times and confirm the result is stable. Traceroute first hops are hints, not proof. If a request fails or both addresses have the same public IP, stop and check the aliases and policy rules before installing.
