@@ -7,10 +7,15 @@ import unittest
 from pathlib import Path
 from urllib.parse import urlparse
 
-from tools.dashboard_preview import INDEX, PreviewServer
+from tools.dashboard_preview import DEMO_BANNER, INDEX, PreviewServer
 
 
 class DashboardPreview(unittest.TestCase):
+    def test_demo_banner_does_not_cover_dashboard_navigation(self):
+        self.assertIn("position:relative", DEMO_BANNER)
+        self.assertNotIn("position:sticky", DEMO_BANNER)
+        self.assertNotIn("position:fixed", DEMO_BANNER)
+
     def test_local_server_serves_demo_banner_and_synthetic_dashboard_apis(self):
         production_html = INDEX.read_bytes()
         preview = PreviewServer()
