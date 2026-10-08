@@ -89,10 +89,11 @@ def build(path: str, labels: dict[str, str], plans: dict[str, float], days: floa
 def to_html(r: dict) -> str:
     e = html.escape
     parts = []
-    report_links = [f'<a href="/report?{urlencode({"days": f"{r["days"]:g}"})}">All ISPs</a>']
-    report_links.extend(
-        f'<a href="/report?{urlencode({"days": f"{r["days"]:g}", "wan": w["wan"]})}">'
-        f'{e(w["label"])}</a>' for w in r["wan_options"])
+    days_value = f"{r['days']:g}"
+    report_links = [f'<a href="/report?{urlencode({"days": days_value})}">All ISPs</a>']
+    for option in r["wan_options"]:
+        query = urlencode({"days": days_value, "wan": option["wan"]})
+        report_links.append(f'<a href="/report?{query}">{e(option["label"])}</a>')
     csv_query = {"days": f"{r['days']:g}"}
     if r.get("selected_wan"):
         csv_query["wan"] = r["selected_wan"]

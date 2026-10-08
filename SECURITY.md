@@ -6,7 +6,7 @@ Security fixes are applied to the current repository version. Users should upgra
 
 ## Reporting a vulnerability
 
-Please do not publish exploit details, credentials, router configuration exports, device inventories, or personal network addresses in a public issue. Contact the repository maintainers through a private channel configured by the project owner. This repository does not currently publish a dedicated security email address; do not assume that a public issue is private.
+Please use [GitHub private vulnerability reporting](https://github.com/KruthikGowda/er605-wancompass/security/advisories/new) for security issues. Do not publish exploit details, credentials, router exports, device inventories, or personal network addresses in a public issue. A regular GitHub issue is public once the repository is public.
 
 Include the affected version, relevant component, impact, and a minimal reproduction that uses synthetic data. Redact tokens, passwords, private IP addresses, MAC addresses, hostnames, and ISP identifiers. Allow maintainers time to investigate and prepare a fix before public disclosure.
 
