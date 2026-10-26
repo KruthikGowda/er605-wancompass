@@ -28,7 +28,7 @@ advanced controls are expandable, separate from the everyday workflow.
 |---|---|
 | Auto balance | Remove the NetPulse WAN preference and use the ER605's normal policy. |
 | Prefer WAN1 / WAN2 | Use a Priority rule. The router's own WAN detection can permit fallback. |
-| Only WAN1 / WAN2 | Use a strict IPv4 Only rule. There is no WAN fallback for that rule. |
+| Only WAN1 / WAN2 | Staged and unavailable until mode-transition forwarding and recovery are verified. |
 | Pause Internet | Add the reviewed IPv4 LAN-to-WAN pause rule. |
 | Resume Internet | Remove the exact saved NetPulse pause rule after verification. |
 

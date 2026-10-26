@@ -28,6 +28,8 @@ PRIORITY_ROUTES = {"WAN1", "WAN2"}
 STRICT_ROUTES = {"WAN1_ONLY", "WAN2_ONLY"}
 ALL_PIN_ROUTES = PRIORITY_ROUTES | STRICT_ROUTES
 STRICT_WAN_FIRMWARE = "2.3.3 Build 20251029 Rel.18054"
+# In-place mode changes can read back correctly while forwarding remains stale.
+STRICT_WAN_TRANSITIONS_VERIFIED = False
 ROUTE_EXPIRY_OPTIONS = {0: "Until changed", 3600: "1 hour", 21600: "6 hours",
                         86400: "24 hours", 604800: "7 days"}
 ROUTE_FIELDS = (".name", "name", "service_type", "src_ipgroup", "dst_ipgroup", "interfaces", "timeobj",
@@ -223,6 +225,16 @@ class RouterControl:
             reason = "Enable ER605 Load Balancing before using policy routes."
         else:
             reason = ""
+        strict_wan_reason = ""
+        if not self.strict_wan_enabled:
+            strict_wan_reason = "Only mode is disabled in config."
+        elif not STRICT_WAN_TRANSITIONS_VERIFIED:
+            strict_wan_reason = "Only-mode forwarding transitions have not been validated."
+        elif firmware_version != STRICT_WAN_FIRMWARE:
+            strict_wan_reason = f"Only mode is validated only for ER605 firmware {STRICT_WAN_FIRMWARE}."
+        elif not ready:
+            strict_wan_reason = reason or "Router controls are locked."
+        strict_wan_available = not strict_wan_reason
         return {"enabled": ready, "configured": self.enabled, "kill_switch": killed,
                 "acl_recovery_failed": acl_recovery_failed,
                 "load_balancing": load_balancing, "reason": reason,
@@ -234,9 +246,10 @@ class RouterControl:
                 "router_age_seconds": age, "router_uptime_seconds": self.router.snap.uptime,
                 "router_uptime_age_seconds": uptime_age,
                 "strict_wan_enabled": self.strict_wan_enabled,
-                "strict_wan_available": bool(self.strict_wan_enabled and firmware_version == STRICT_WAN_FIRMWARE and ready),
+                "strict_wan_available": strict_wan_available,
+                "strict_wan_reason": strict_wan_reason,
                 "features": {"route": "ready", "reservation": "ready",
-                             "strict_wan": "ready" if self.strict_wan_enabled and firmware_version == STRICT_WAN_FIRMWARE and ready else "not_ready",
+                             "strict_wan": "ready" if strict_wan_available else "not_ready",
                              "qos_priority": "not_ready",
                                                            "smart_failover": "not_enabled"}}
 
@@ -294,6 +307,8 @@ class RouterControl:
             raise ControlError("Router controls are locked; strict WAN route changes are unavailable.")
         if not self.strict_wan_enabled and not allow_restore:
             raise ControlError("Strict WAN routing is disabled in config; no Only-mode route will be written.")
+        if not STRICT_WAN_TRANSITIONS_VERIFIED and not allow_restore:
+            raise ControlError("Only-mode forwarding transitions have not been validated; no strict WAN route will be written.")
 
     def set_group_smart_routing(self, group_id: int, enabled: bool,
                                 actor: str = "dashboard") -> dict:

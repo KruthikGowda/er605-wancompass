@@ -50,8 +50,8 @@ class ActionControl:
         for key, label in (("only_wan1", "Only WAN 1"), ("only_wan2", "Only WAN 2")):
             actions.append({"id": key, "label": label,
                             "enabled": bool(route.get("strict_wan_available")),
-                            "reason": ("Only mode is disabled in config or unavailable on this firmware."
-                                       if not route.get("strict_wan_available") else "")})
+                            "reason": route.get("strict_wan_reason", "")
+                            if not route.get("strict_wan_available") else ""})
         return {"enabled": bool(route.get("enabled")), "actions": actions,
                 "reason": route.get("reason", "")}
 
@@ -112,7 +112,8 @@ class ActionControl:
         if action in ("only_wan1", "only_wan2") and not self.routes.state().get("strict_wan_available"):
             if not self.routes.strict_wan_enabled:
                 raise ControlError("Strict WAN routing is disabled in config; no Only-mode route will be written.")
-            raise ControlError("Strict WAN routing is available only on the reviewed ER605 firmware and ready controls.")
+            raise ControlError(self.routes.state().get("strict_wan_reason")
+                               or "Strict WAN routing is unavailable on this firmware and control state.")
 
         management_ip = str(management_ip or "").strip() or None
         targets = self._build_targets(selected, action, group, duration_seconds, management_ip)

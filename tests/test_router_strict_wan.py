@@ -8,7 +8,9 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from netpulse.router import control as control_module
 from netpulse.router.control import (ControlError, RouterControl, observed_netpulse_route)
 from netpulse.router.actions import ActionControl
 from netpulse.router.er605 import RouterError
@@ -42,6 +44,9 @@ class FailSecondAndStrictRestore(FailSecondWanUpdate):
 
 class StrictWanControls(unittest.TestCase):
     def setUp(self):
+        transition_patch = patch.object(control_module, "STRICT_WAN_TRANSITIONS_VERIFIED", True)
+        transition_patch.start()
+        self.addCleanup(transition_patch.stop)
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.db = str(Path(temp.name) / "strict.db")
@@ -74,13 +79,29 @@ class StrictWanControls(unittest.TestCase):
         with self.assertRaisesRegex(ControlError, "disabled in config"):
             self.control.preview(MAC, "WAN1_ONLY", "owner")
         self.assertEqual(self.client.writes, [])
-
         self.control.strict_wan_enabled = True
         self.router.snap.firmware_version = "2.4.0 Build 20261001"
         self.assertFalse(self.control.state()["enabled"])
         with self.assertRaises(ControlError):
             self.control.preview(MAC, "WAN1_ONLY", "owner")
         self.assertEqual(self.client.writes, [])
+
+    def test_unverified_mode_transition_gate_rejects_strict_even_when_config_enabled(self):
+        with patch.object(control_module, "STRICT_WAN_TRANSITIONS_VERIFIED", False):
+            self.control.strict_wan_enabled = True
+            state = self.control.state()
+            self.assertFalse(state["strict_wan_available"])
+            self.assertEqual(state["features"]["strict_wan"], "not_ready")
+            self.assertIn("forwarding transitions have not been validated", state["strict_wan_reason"])
+            only_actions = [a for a in ActionControl(self.control).state()["actions"]
+                            if a["id"].startswith("only_")]
+            self.assertTrue(all(not a["enabled"] and state["strict_wan_reason"] in a["reason"]
+                                for a in only_actions))
+            with self.assertRaisesRegex(ControlError, "forwarding transitions have not been validated"):
+                self.control.preview(MAC, "WAN1_ONLY", "owner")
+            # Rollback may restore a previously saved Only row even while new transitions are gated.
+            self.control._check_route_capability("WAN1_ONLY", allow_restore=True)
+            self.assertEqual(self.client.writes, [])
 
     def test_stale_and_unknown_route_modes_never_preview_as_priority(self):
         self.router.snap.raw["policy_routes"] = [{"name": "NP_R_AABBCCDDEE01", "state": "on",
