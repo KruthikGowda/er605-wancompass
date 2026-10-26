@@ -165,6 +165,92 @@ class QuickPickerConversation(unittest.TestCase):
         self._tap(self._callback(markup, "action", callback_indexes["Prefer WAN2"]))
         self.assertEqual(self.previews[-1][0]["action"], "prefer_wan2")
 
+    def test_pause_requires_duration_and_confirms_each_whitelisted_value(self):
+        self.rows["actions"] = [{"id": "pause", "label": "Pause internet", "enabled": True}]
+        self.previews.clear()
+
+        def pause_preview(payload, chat):
+            self.previews.append((dict(payload), chat))
+            return {"text": f"Pause review {payload['duration_seconds']}",
+                    "confirm_token": f"pause-token-{len(self.previews)}",
+                    "fingerprint": repr((payload, chat))}
+
+        self.picker._preview = pause_preview
+        expected = [("15 minutes", 900), ("1 hour", 3600),
+                    ("6 hours", 21600), ("Until resumed", 0)]
+        for label, seconds in expected:
+            with self.subTest(duration=label):
+                previous_count = len(self.previews)
+                _, _ = self.picker.begin("devices", OWNER, OWNER)
+                _, action_markup = self.picker.message("1", OWNER, OWNER)
+                pause_cb = next(button["callback_data"] for row in action_markup["inline_keyboard"]
+                                for button in row if button["text"] == "Pause internet")
+                text, duration_markup = self._tap(pause_cb)
+                self.assertIn("Choose how long", text)
+                self.assertEqual(len(self.previews), previous_count,
+                                 "no preview token before a duration is selected")
+                duration_cb = next(button["callback_data"] for row in duration_markup["inline_keyboard"]
+                                   for button in row if button["text"] == label)
+                text, review_markup = self._tap(duration_cb)
+                self.assertIn("Pause review", text)
+                expected_payload = {"kind": "devices", "items": [self.rows["devices"][0]],
+                                    "action": "pause", "duration_seconds": seconds}
+                self.assertEqual(self.previews[-1], (expected_payload, OWNER))
+                confirm_cb = self._callback(review_markup, "confirm")
+                self._tap(confirm_cb)
+                self.assertEqual(self.previews[-1], (expected_payload, OWNER))
+                self.assertEqual(self.applied[-1], (f"pause-token-{len(self.previews)}", OWNER))
+        self.assertEqual([payload[0]["duration_seconds"] for payload in self.previews],
+                         [seconds for _label, seconds in expected for _ in range(2)])
+
+    def test_pause_duration_callbacks_reject_foreign_invalid_stale_and_expired_choices(self):
+        self.rows["actions"] = [{"id": "pause", "label": "Pause internet", "enabled": True}]
+        _, _ = self.picker.begin("devices", OWNER, OWNER)
+        _, action_markup = self.picker.message("1", OWNER, OWNER)
+        pause_cb = next(button["callback_data"] for row in action_markup["inline_keyboard"]
+                        for button in row if button["text"] == "Pause internet")
+        _, duration_markup = self._tap(pause_cb)
+        duration_cb = next(button["callback_data"] for row in duration_markup["inline_keyboard"]
+                           for button in row if button["text"] == "Until resumed")
+        self.assertIsNotNone(self._tap(duration_cb, sender="77"))
+        self.assertIsNotNone(self._tap(duration_cb, message_chat="77"))
+        invalid = duration_cb.rsplit(":", 1)[0] + ":9"
+        text, _ = self._tap(invalid)
+        self.assertIn("Choose one of the listed", text)
+        self.assertIsNone(self._tap(duration_cb), "the old revision is stale after a rejected callback")
+        self.assertEqual(self.previews, [])
+        self.assertEqual(self.applied, [])
+        self.now += 601
+        text, _ = self._tap(duration_cb)
+        self.assertIn("expired", text)
+        self.assertEqual(self.previews, [])
+        self.assertEqual(self.applied, [])
+
+    def test_back_and_changed_selection_clear_pause_duration(self):
+        self.rows["actions"] = [
+            {"id": "auto", "label": "Autobalance", "enabled": True},
+            {"id": "pause", "label": "Pause internet", "enabled": True},
+        ]
+        _, _ = self.picker.begin("devices", OWNER, OWNER)
+        _, action_markup = self.picker.message("1", OWNER, OWNER)
+        pause_cb = next(button["callback_data"] for row in action_markup["inline_keyboard"]
+                        for button in row if button["text"] == "Pause internet")
+        _, duration_markup = self._tap(pause_cb)
+        duration_cb = next(button["callback_data"] for row in duration_markup["inline_keyboard"]
+                           for button in row if button["text"] == "15 minutes")
+        _, review_markup = self._tap(duration_cb)
+        _, action_markup = self._tap(self._callback(review_markup, "back"))
+        _, list_markup = self._tap(self._callback(action_markup, "back"))
+        _, action_markup = self.picker.message("2", OWNER, OWNER)
+        auto_cb = next(button["callback_data"] for row in action_markup["inline_keyboard"]
+                       for button in row if button["text"] == "Autobalance")
+        self._tap(auto_cb)
+
+        self.assertEqual(self.previews[0][0]["duration_seconds"], 900)
+        self.assertEqual(self.previews[-1][0]["action"], "auto")
+        self.assertEqual(self.previews[-1][0]["items"], [self.rows["devices"][1]])
+        self.assertNotIn("duration_seconds", self.previews[-1][0])
+
     def test_bot_keyboard_is_minimal_and_legacy_commands_parse(self):
         self.assertEqual(len(KEYBOARD["keyboard"]), 4)
         self.assertEqual(parse_command("/route@MyNetPulseBot Home WAN1"), "route")
@@ -278,6 +364,35 @@ class GroupPickerConversations(unittest.TestCase):
         self.assertIn("Choose one group at a time", text)
         self.assertNotIn("Choose an action", text)
         self.assertNotIn("Confirm", str(markup))
+
+    def test_group_pause_until_resumed_keeps_zero_through_fresh_confirm(self):
+        self.actions = [{"id": "pause", "label": "Pause internet", "enabled": True}]
+        previews, applies = [], []
+
+        def route_preview(payload, chat):
+            previews.append((dict(payload), chat))
+            return {"text": "Reviewed group pause", "confirm_token": f"token-{len(previews)}",
+                    "fingerprint": repr((payload, chat))}
+
+        self.picker._preview = route_preview
+        self.picker._apply = lambda token, chat: applies.append((token, chat)) or "Paused."
+
+        _, _ = self.picker.begin("groups", OWNER, OWNER)
+        _, action_markup = self.picker.message("1", OWNER, OWNER)
+        pause_cb = self._button(action_markup, "Pause internet")
+        _, duration_markup = self._tap(pause_cb)
+        duration_cb = self._button(duration_markup, "Until resumed")
+        text, review_markup = self._tap(duration_cb)
+        self.assertIn("Reviewed group pause", text)
+        payload = {"kind": "groups", "items": [self.groups[0]], "action": "pause",
+                   "duration_seconds": 0}
+        self.assertEqual(previews, [(payload, OWNER)])
+        self.assertEqual(self.group_previews, [], "group pause uses the routing action controller")
+
+        text, _ = self._tap(self._button(review_markup, "Confirm"))
+        self.assertEqual(text, "Paused.")
+        self.assertEqual(previews, [(payload, OWNER), (payload, OWNER)])
+        self.assertEqual(applies, [("token-2", OWNER)])
 
     def test_remove_list_includes_offline_group_members_and_checks_snapshot(self):
         offline = "02-00-00-00-00-03"
