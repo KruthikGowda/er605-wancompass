@@ -15,6 +15,51 @@ HTML_PATH = ROOT / "netpulse" / "web" / "static" / "index.html"
 
 class DashboardGroupEditorBehavior(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
+    def test_group_draft_toggle_activates_membership_controls_explicitly(self):
+        html = HTML_PATH.read_text(encoding="utf-8")
+        start = html.index('$ ("group-new")') if '$ ("group-new")' in html else html.index('$("group-new").addEventListener("click", () => {')
+        end = html.index('\n$("device-groups").addEventListener("click"', start)
+        source = html[start:end]
+        harness = r"""
+const assert = require('node:assert/strict');
+const source = JSON.parse(process.argv[1]);
+const groupNew = {handlers:{}, addEventListener(name, callback){this.handlers[name]=callback;}};
+const groupName = {value:'Existing draft name'};
+const $ = id => id === 'group-new' ? groupNew : id === 'group-name' ? groupName : null;
+const selectedDeviceMacs = new Set(['AA:BB:CC:DD:EE:FF']);
+const renderDevices = () => {};
+const deviceNotice = () => {};
+const controls = new Function('$','selectedDeviceMacs','renderDevices','deviceNotice',
+  'let groupDraftActive=false; let editingGroupId=9;\n' + source +
+  '\nreturn {click(){groupNew.handlers.click();}, active(){return groupDraftActive;}, editing(){return editingGroupId;}};')(
+    $,selectedDeviceMacs,renderDevices,deviceNotice);
+controls.click();
+assert.equal(controls.active(), true, 'Start new group explicitly activates the draft');
+assert.equal(controls.editing(), null);
+assert.equal(groupName.value, '');
+assert.equal(selectedDeviceMacs.size, 0);
+"""
+        result = subprocess.run([shutil.which("node") or "node", "-e", harness, json.dumps(source)],
+                                cwd=ROOT, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('groupDraftActive && mac && !x.protected', html,
+                      'Add to group is hidden until a group draft is active')
+
+    def test_device_cards_keep_critical_state_visible_and_disclose_raw_metadata(self):
+        html = HTML_PATH.read_text(encoding="utf-8")
+        self.assertIn('<details class="device-full-details"><summary>Device details</summary>', html)
+        row = html[html.index('return `<article class="device-row">', html.index('function renderDevices()')):]
+        visible = row.index('${esc(internetStatus)}')
+        visible_route = row.index('${routeAttention ?')
+        details = row.index('<details class="device-full-details">')
+        self.assertLess(visible, details, 'saved pause status is visible without opening details')
+        self.assertLess(visible_route, details, 'stale route and drift warnings are visible')
+        for metadata in ('${leaseInfo}', '${esc(presenceStatus)}', 'ER605 NetPulse rule last read:', '${seen}'):
+            self.assertGreater(row.index(metadata), details, f'{metadata} stays inside Device details')
+        self.assertIn('WAN preference: ${esc(routeName)}', row)
+        self.assertIn('class="quick-action-manage"', row)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
     def test_unavailable_member_removal_is_draft_only_and_save_is_gated(self):
         html = HTML_PATH.read_text(encoding="utf-8")
         start = html.index("function renderGroupSelection()")
@@ -24,7 +69,7 @@ class DashboardGroupEditorBehavior(unittest.TestCase):
 const assert = require('node:assert/strict');
 const source = JSON.parse(process.argv[1]);
 const ids = ['group-selection-count', 'group-editor', 'group-name', 'group-editor-title',
-  'group-editor-count', 'group-selection-empty', 'group-save', 'group-selection-members'];
+  'group-editor-count', 'group-selection-empty', 'group-save', 'group-selection-members', 'group-cancel-draft'];
 const elements = Object.fromEntries(ids.map(id => [id, {
   value: '', textContent: '', innerHTML: '', hidden: false, disabled: false,
   handlers: {}, addEventListener(name, callback) { this.handlers[name] = callback; }
@@ -39,8 +84,8 @@ let renderCalls = 0;
 let fetchCalls = 0;
 globalThis.fetch = () => { fetchCalls++; throw new Error('fetch must not run while editing a draft'); };
 const renderDevices = () => { renderCalls++; render(); };
-render = new Function('$', 'selectedDeviceMacs', 'deviceData', 'esc', 'renderDevices', 'editingGroupId',
-  source + '\nreturn renderGroupSelection;')($, selectedDeviceMacs, deviceData, esc, renderDevices, null);
+render = new Function('$', 'selectedDeviceMacs', 'deviceData', 'esc', 'renderDevices', 'editingGroupId', 'groupDraftActive',
+  source + '\nreturn renderGroupSelection;')($, selectedDeviceMacs, deviceData, esc, renderDevices, null, true);
 
 render();
 assert.equal($('group-save').disabled, true, 'save is disabled until a name is entered');
@@ -70,6 +115,8 @@ click({target: {closest() { return {dataset: {mac: 'AA:BB:CC:DD:EE:FF'}}; }}});
 assert.equal(selectedDeviceMacs.size, 0);
 assert.equal($('group-selection-members').hidden, true);
 assert.equal($('group-save').disabled, true, 'save disables again when the draft is empty');
+assert.equal($('group-selection-empty').hidden, false);
+assert.match($('group-selection-empty').textContent, /Group draft active/);
 assert.equal(fetchCalls, 0);
 """
         result = subprocess.run(
@@ -143,10 +190,15 @@ const esc = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt
   .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 const deviceData = {devices: [], control: {enabled: true}, recent_speeds: {}};
 const labelOf = value => `<b>${value}</b>`;
+const routeLabel = value => value === 'WAN1_ONLY' ? 'Only WAN 1 · no fallback' :
+  value === 'WAN2_ONLY' ? 'Only WAN 2 · no fallback' : value === 'AUTO' ? 'Auto balance' :
+  value === 'MIXED' ? 'Mixed routes' : `Prefer ${value}`;
+let strictAvailable = false;
+const strictWanAvailable = () => strictAvailable;
 const duration = value => `${value}s`;
 const fmt = value => String(value);
-const renderGroups = new Function('$', 'deviceData', 'esc', 'labelOf', 'duration', 'fmt',
-  source + '\nreturn renderGroups;')($, deviceData, esc, labelOf, duration, fmt);
+const renderGroups = new Function('$', 'deviceData', 'esc', 'labelOf', 'duration', 'fmt', 'routeLabel', 'strictWanAvailable',
+  source + '\nreturn renderGroups;')($, deviceData, esc, labelOf, duration, fmt, routeLabel, strictWanAvailable);
 const group = (enabled, ready) => ({
   id: 7, name: '<img src=x>', members: ['AA:BB:CC:DD:EE:FF'], reserved_count: 1,
   blocked_count: 0, route: 'WAN1', route_readback: 'matches', smart_routing_enabled: enabled,
@@ -175,6 +227,25 @@ assert.doesNotMatch(html, /Smart WAN candidate/);
 html = render(false, false);
 assert.match(html, /Monitoring candidate/);
 assert.match(html, /no route changed/);
+
+const strict = {...group(false, true), route:'WAN1_ONLY', members:['AA:BB:CC:DD:EE:FF']};
+deviceData.devices = [{mac:'AA:BB:CC:DD:EE:FF', route:'WAN1_ONLY', reserved:true, ip:'192.0.2.8'}];
+host.innerHTML = '';
+renderGroups([strict]);
+html = host.innerHTML;
+assert.match(html, /WAN preference: Only WAN 1 · no fallback/,
+  'a saved strict preference is shown in the group summary');
+assert.match(html, /option value="WAN1_ONLY" selected disabled>Only &lt;b&gt;WAN1&lt;\/b&gt; · no fallback/,
+  'the saved strict route remains selected while unsupported strict controls stay disabled');
+assert.match(html, /Smart WAN unavailable · an Only mode has no fallback/,
+  'Smart WAN explains that it cannot override a strict member route');
+assert.match(html, /class="group-smart-routing"[^>]*disabled/,
+  'Smart WAN cannot be enabled while a strict route is present');
+strictAvailable = true;
+host.innerHTML = '';
+renderGroups([strict]);
+assert.match(host.innerHTML, /option value="WAN1_ONLY" selected >Only &lt;b&gt;WAN1&lt;\/b&gt; · no fallback/,
+  'advertised strict capability enables the advanced option while preserving its current value');
 """
         result = subprocess.run(
             [shutil.which("node") or "node", "-e", harness, json.dumps(render_source)],

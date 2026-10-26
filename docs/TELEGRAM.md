@@ -1,5 +1,9 @@
 # Telegram setup and operation
 
+For day-to-day use, open Devices or Groups and choose from the lists. Numbered
+replies and buttons replace typed device names and parameters. See
+[everyday controls](CONTROLS.md) for group membership and connection actions.
+
 WANCompass uses a Telegram bot you create and own. Each installation owner should create a dedicated bot through the official `@BotFather`; do not use a shared project bot, another person's token, or a token copied from an example. A bot token grants control of that bot, and polling updates should have one active consumer.
 
 Telegram is optional. WANCompass works without it. Keep `[telegram].enabled = false` if you do not need bot commands or notifications.

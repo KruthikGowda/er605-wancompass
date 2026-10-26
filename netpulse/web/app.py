@@ -166,6 +166,34 @@ def make_handler(board: StatusBoard, db_path: str, auth_file: str | None = None)
                     self._send(200, INDEX.read_bytes(), "text/html; charset=utf-8")
                 elif url.path == "/api/status":
                     self._json(board.get())
+                elif url.path == "/api/actions":
+                    actions = board.get_extra("action_control")
+                    state = actions.state() if actions else {
+                        "enabled": False, "reason": "Router controls are not configured.", "actions": []}
+                    self._json({**state, "control": {"enabled": state["enabled"],
+                                                     "reason": state.get("reason", "")}})
+                elif url.path == "/api/devices/traffic":
+                    traffic = board.get_extra("device_traffic")
+                    if traffic is None:
+                        self._json({"error": "Device traffic measurements are not configured."}, 503)
+                        return
+                    try:
+                        if q.get("group_id"):
+                            group_id = int(q["group_id"][0])
+                            group = next((g for g in sqlite.device_groups(db_path) if g["id"] == group_id), None)
+                            if group is None:
+                                raise ValueError("This group no longer exists.")
+                            macs = group["members"]
+                        else:
+                            macs = [part for value in q.get("mac", []) for part in value.split(",")]
+                        if not macs or len(macs) > 128:
+                            raise ValueError("Choose between 1 and 128 devices.")
+                        normalized = [normalize_mac(mac) for mac in macs]
+                        if any(not re.fullmatch(r"[0-9A-F]{2}(?:-[0-9A-F]{2}){5}", mac) for mac in normalized):
+                            raise ValueError("Choose valid device identities.")
+                        self._json(traffic.read(list(dict.fromkeys(normalized))))
+                    except (ValueError, TypeError) as exc:
+                        self._json({"error": str(exc)}, 400)
                 elif url.path == "/api/history":
                     hours = min(max(float(q.get("hours", ["24"])[0]), 1), 24 * 400)
                     since = int(time.time() - hours * 3600)
@@ -233,7 +261,7 @@ def make_handler(board: StatusBoard, db_path: str, auth_file: str | None = None)
                         "configured": configured,
                         "cleanup_enabled": bool(raw_state.get("cleanup_enabled")),
                         "reason": ("" if enabled else
-                                   "Internet pause has not been enabled. Awaiting WAN2 and recovery validation."
+                                   "Internet pause has not been enabled. Awaiting router enforcement and recovery validation."
                                    if not configured else
                                    "Internet pause is temporarily unavailable; router safety checks need attention."),
                     }
@@ -285,10 +313,13 @@ def make_handler(board: StatusBoard, db_path: str, auth_file: str | None = None)
                     for group in groups:
                         member_settings = {(saved_routes.get(mac, {}).get("route", "AUTO"),
                                             saved_routes.get(mac, {}).get("expires_at")
-                                            if saved_routes.get(mac, {}).get("route", "AUTO") in ("WAN1", "WAN2")
+                                            if saved_routes.get(mac, {}).get("route", "AUTO") in ("WAN1", "WAN2", "WAN1_ONLY", "WAN2_ONLY")
                                             else None)
                                            for mac in group["members"]}
                         member_routes = {route for route, _ in member_settings}
+                        group["strict_wan_member_count"] = sum(
+                            saved_routes.get(mac, {}).get("route") in ("WAN1_ONLY", "WAN2_ONLY")
+                            for mac in group["members"])
                         group["route"] = next(iter(member_routes)) if len(member_routes) == 1 else "MIXED"
                         group["expiry_mixed"] = (len(member_routes) == 1 and
                                                   len({expiry for _, expiry in member_settings}) > 1)
@@ -474,7 +505,54 @@ def make_handler(board: StatusBoard, db_path: str, auth_file: str | None = None)
                 self._send(403, b"cross-site request refused", "text/plain")
                 return
             try:
-                if url.path == "/api/router/pause":
+                if url.path in ("/api/actions/preview", "/api/actions/apply"):
+                    if not origin or urlparse(origin).netloc != self.headers.get("Host"):
+                        self._json({"error": "Actions require a same-origin request."}, 403)
+                        return
+                    if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+                        self._json({"error": "Actions require JSON."}, 415)
+                        return
+                    try:
+                        length = int(self.headers.get("Content-Length", "0"))
+                    except ValueError:
+                        self._json({"error": "Invalid request size."}, 400)
+                        return
+                    if not 1 <= length <= 16384:
+                        self._json({"error": "Invalid request size."}, 413)
+                        return
+                    try:
+                        body = json.loads(self.rfile.read(length))
+                    except (ValueError, UnicodeDecodeError):
+                        self._json({"error": "Invalid JSON request."}, 400)
+                        return
+                    if not isinstance(body, dict):
+                        self._json({"error": "Choose an action from the dashboard."}, 400)
+                        return
+                    actions = board.get_extra("action_control")
+                    if actions is None:
+                        self._json({"error": "Router controls are not configured."}, 503)
+                        return
+                    address = str(self.client_address[0])
+                    actor = f"dashboard:{address}"
+                    try:
+                        if url.path.endswith("/apply"):
+                            token = body.get("token")
+                            if body.get("confirmed") is not True or not isinstance(token, str) or not 1 <= len(token) <= 100:
+                                raise ValueError("Review and confirm the action first.")
+                            result = actions.apply(token, actor=actor)
+                        else:
+                            result = actions.preview(macs=body.get("macs"), group_id=body.get("group_id"),
+                                                     action=body.get("action"), actor=actor,
+                                                     duration_seconds=body.get("duration_seconds", 0),
+                                                     management_ip=address)
+                    except (ControlError, ValueError, TypeError) as exc:
+                        self._json({"error": str(exc)}, 409)
+                        return
+                    except RouterError:
+                        self._json({"error": "Router action could not be verified. Refresh and inspect its saved state."}, 502)
+                        return
+                    self._json(result)
+                elif url.path == "/api/router/pause":
                     if not origin or urlparse(origin).netloc != self.headers.get("Host"):
                         self._send(403, b"router pause requires a same-origin request", "text/plain")
                         return

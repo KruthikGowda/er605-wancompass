@@ -6,8 +6,12 @@ The feature controls IPv4 Internet access through the configured router. It does
 
 ## Owner controls
 
+In Telegram, use Devices or Groups, select targets from the list, choose Pause or
+Resume, and confirm. The dashboard uses the shared action panel. Missing eligible
+DHCP reservations are included in the same review. See [everyday controls](CONTROLS.md).
+
 Device and group actions use the same flow: select Pause or Resume, review every target and
-duration, then confirm a short-lived preview. Telegram commands are owner-only:
+duration, then confirm a short-lived preview. Advanced typed commands remain owner-only:
 
 - `/pause <MAC or exact device name> [15m|1h|6h|until-resumed]`
 - `/resume <MAC or exact device name>`

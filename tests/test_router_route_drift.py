@@ -21,7 +21,8 @@ class RouterRouteDriftAlerts(unittest.TestCase):
                                 int(self.s.clock()), "owner", "AUTO", "applied")
         self.raw = {
             "clients": [], "reservations": [],
-            "policy_routes": [{"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN1"}],
+            "policy_routes": [{"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN1",
+                               "mode": "Priority"}],
             "policy_routes_checked_at": self.s.clock(),
         }
         self.s.mon.router = SimpleNamespace(snap=SimpleNamespace(raw=self.raw, checked_at=self.s.clock()))
@@ -37,7 +38,8 @@ class RouterRouteDriftAlerts(unittest.TestCase):
         self.s.mon.on_router_events(self.s.clock() + 600, [])
         self.assertEqual(len(self.s.outbox.texts()), 1, "persistent drift should not spam every poll")
 
-        self.raw["policy_routes"] = [{"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN2"}]
+        self.raw["policy_routes"] = [{"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN2",
+                                      "mode": "Priority"}]
         self.raw["policy_routes_checked_at"] = self.s.clock() + 1200
         self.s.mon.on_router_events(self.s.clock() + 1200, [])
         self.assertEqual(len(self.s.outbox.texts()), 2)
@@ -50,8 +52,8 @@ class RouterRouteDriftAlerts(unittest.TestCase):
         self.assertEqual(self.s.outbox.texts(), [])
 
         self.raw["policy_routes"] = [
-            {"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN1"},
-            {"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN2"}]
+            {"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN1", "mode": "Priority"},
+            {"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN2", "mode": "Priority"}]
         self.raw["policy_routes_checked_at"] = self.s.clock() + 600
         self.s.mon.on_router_events(self.s.clock() + 600, [])
         self.assertEqual(self.s.outbox.texts(), [], "duplicate rows are ambiguous, not confirmed drift")

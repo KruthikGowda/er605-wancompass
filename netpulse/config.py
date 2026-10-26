@@ -85,6 +85,7 @@ class RouterConfig:
     poll_minutes: float = 10         # each full check logs in, which logs out the Omada web UI
     credentials_file: str = "/etc/netpulse/router.toml"
     controls_enabled: bool = False
+    strict_wan_controls_enabled: bool = False
     internet_controls_enabled: bool = False
     protected_macs: tuple[str, ...] = ()
     kill_switch: str = "/etc/netpulse/controls.disabled"
@@ -240,6 +241,8 @@ def _validate(cfg: Config) -> None:
         raise ValueError(f"mode must be one of {MODES}, got {cfg.mode!r}")
     if not isinstance(cfg.router.internet_controls_enabled, bool):
         raise ValueError("router.internet_controls_enabled must be true or false")
+    if not isinstance(cfg.router.strict_wan_controls_enabled, bool):
+        raise ValueError("router.strict_wan_controls_enabled must be true or false")
     if cfg.web.host not in ("127.0.0.1", "::1", "localhost") and not cfg.web.auth_file.strip():
         raise ValueError("web.auth_file is required when the dashboard listens beyond loopback")
     if cfg.preferred_wan and cfg.preferred_wan not in names:

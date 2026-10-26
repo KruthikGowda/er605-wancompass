@@ -288,12 +288,45 @@ def device_groups(path: str) -> list[dict]:
         return list(result.values())
 
 
+def _device_group_in_transaction(db: sqlite3.Connection, group_id: int) -> dict | None:
+    row = db.execute("SELECT id, name, created_at, updated_at, smart_routing_enabled, "
+                     "smart_enabled_at, smart_last_action_at FROM device_groups WHERE id=?",
+                     (group_id,)).fetchone()
+    if not row:
+        return None
+    members = [item[0] for item in db.execute(
+        "SELECT mac FROM device_group_members WHERE group_id=? ORDER BY mac", (group_id,))]
+    return {"id": row[0], "name": row[1], "created_at": row[2], "updated_at": row[3],
+            "smart_routing_enabled": bool(row[4]), "smart_enabled_at": row[5],
+            "smart_last_action_at": row[6], "members": members}
+
+
+def _matches_device_group_snapshot(current: dict | None, expected: dict) -> bool:
+    return bool(current and current["id"] == expected.get("id")
+                and current["name"] == expected.get("name")
+                and current["updated_at"] == expected.get("updated_at")
+                and current["members"] == expected.get("members")
+                and current["smart_routing_enabled"] == expected.get("smart_routing_enabled"))
+
+
 def save_device_group(path: str, name: str, members: list[str], now: int,
-                      group_id: int | None = None) -> dict:
-    """Create/update a group and membership atomically; a device can belong to one group."""
+                      group_id: int | None = None,
+                      expected_snapshot: dict | None = None,
+                      preserve_smart_routing: bool = False) -> dict:
+    """Create/update a group atomically, optionally compare-and-swapping a reviewed snapshot."""
+    if not isinstance(preserve_smart_routing, bool):
+        raise ValueError("preserve_smart_routing must be a boolean")
     with closing(sqlite3.connect(path, timeout=10)) as db:
         db.execute("PRAGMA foreign_keys=ON")
-        with db:
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            current = _device_group_in_transaction(db, group_id) if group_id is not None else None
+            if expected_snapshot is not None:
+                if group_id is None or not _matches_device_group_snapshot(current, expected_snapshot):
+                    raise ValueError("Device group changed after review.")
+            if any(existing_id != group_id and existing.casefold() == name.casefold()
+                   for existing_id, existing in db.execute("SELECT id, name FROM device_groups")):
+                raise sqlite3.IntegrityError("device group name already exists")
             if group_id is None:
                 cur = db.execute("INSERT INTO device_groups(name, created_at, updated_at) VALUES (?,?,?)",
                                  (name, now, now))
@@ -301,22 +334,44 @@ def save_device_group(path: str, name: str, members: list[str], now: int,
             else:
                 # A membership edit changes the targets of automatic routing; require a fresh
                 # opt-in after the owner reviews the new group membership.
-                cur = db.execute("UPDATE device_groups SET name=?, updated_at=?, smart_routing_enabled=0, "
-                                 "smart_enabled_at=NULL WHERE id=?", (name, now, group_id))
+                if not current:
+                    raise ValueError("Device group no longer exists.")
+                same_members = current["members"] == sorted(members)
+                if preserve_smart_routing and same_members:
+                    cur = db.execute("UPDATE device_groups SET name=?, updated_at=? WHERE id=?",
+                                     (name, now, group_id))
+                else:
+                    cur = db.execute("UPDATE device_groups SET name=?, updated_at=?, smart_routing_enabled=0, "
+                                     "smart_enabled_at=NULL WHERE id=?", (name, now, group_id))
                 if cur.rowcount != 1:
                     raise ValueError("Device group no longer exists.")
             db.execute("DELETE FROM device_group_members WHERE group_id=?", (group_id,))
             db.executemany("INSERT INTO device_group_members(mac, group_id) VALUES (?,?)",
                            [(mac, group_id) for mac in members])
-        return next(g for g in device_groups(path) if g["id"] == group_id)
+            result = _device_group_in_transaction(db, group_id)
+            db.commit()
+            return result
+        except Exception:
+            db.rollback()
+            raise
 
 
-def delete_device_group(path: str, group_id: int) -> bool:
+def delete_device_group(path: str, group_id: int,
+                        expected_snapshot: dict | None = None) -> bool:
+    """Delete a group, optionally comparing its reviewed identity and membership atomically."""
     with closing(sqlite3.connect(path, timeout=10)) as db:
         db.execute("PRAGMA foreign_keys=ON")
-        with db:
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            if expected_snapshot is not None and not _matches_device_group_snapshot(
+                    _device_group_in_transaction(db, group_id), expected_snapshot):
+                raise ValueError("Device group changed after review.")
             cur = db.execute("DELETE FROM device_groups WHERE id=?", (group_id,))
+            db.commit()
             return cur.rowcount == 1
+        except Exception:
+            db.rollback()
+            raise
 
 
 def set_group_smart_routing(path: str, group_id: int, enabled: bool,
@@ -405,7 +460,8 @@ def due_device_routes(path: str, now: int | None = None,
         expiry_mono = "expires_monotonic" if "expires_monotonic" in columns else "NULL"
         boot = "boot_id" if "boot_id" in columns else "NULL"
         rows = db.execute(f"SELECT mac, ip, route, updated_at, actor, expires_at, {expiry_mono}, {boot} "
-                          "FROM device_routes WHERE expires_at IS NOT NULL AND route IN ('WAN1','WAN2') "
+                          "FROM device_routes WHERE expires_at IS NOT NULL AND route IN "
+                          "('WAN1','WAN2','WAN1_ONLY','WAN2_ONLY') "
                           "ORDER BY expires_at")
         due = []
         for mac, ip, route, updated_at, actor, expires_at, expires_monotonic, saved_boot_id in rows:
@@ -439,7 +495,7 @@ def set_device_route(path: str, mac: str, ip: str, route: str, ts: int, actor: s
     with closing(sqlite3.connect(path, timeout=10)) as db:
         with db:
             if result == "applied":
-                timed = route in ("WAN1", "WAN2") and expires_at is not None
+                timed = route in ("WAN1", "WAN2", "WAN1_ONLY", "WAN2_ONLY") and expires_at is not None
                 db.execute("INSERT OR REPLACE INTO device_routes "
                            "(mac, ip, route, updated_at, actor, expires_at, expires_monotonic, boot_id) "
                            "VALUES (?,?,?,?,?,?,?,?)",

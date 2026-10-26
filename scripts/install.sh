@@ -102,6 +102,7 @@ cp -r "$REPO/netpulse" /opt/netpulse/
 cp "$REPO/README.md" /opt/netpulse/
 install -d -m 755 /opt/netpulse/tools
 install -m 644 "$REPO/tools/router_acl_pilot.py" "$REPO/tools/router_firewall_discover.py" /opt/netpulse/tools/
+install -m 644 "$REPO/tools/router_control_readiness.py" /opt/netpulse/tools/
 find /opt/netpulse -name __pycache__ -prune -exec rm -rf {} +
 
 echo "==> Config -> $CONFIG_PATH"

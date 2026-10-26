@@ -18,7 +18,7 @@ class GroupRouteActions(unittest.TestCase):
     A = "AA-BB-CC-DD-EE-01"
     B = "AA-BB-CC-DD-EE-02"
 
-    def _preview(self, mac, route, actor, expiry_seconds=0):
+    def _preview(self, mac, route, actor, expiry_seconds=0, _rollback=False, _restore_state=None):
         self.serial += 1
         token = f"t{self.serial}"
         self.previews[token] = (mac, route)
@@ -46,7 +46,8 @@ class GroupRouteActions(unittest.TestCase):
         return {"applied": True}
 
     def _policy_routes(self):
-        return [{"name": f"NP_R_{mac.replace('-', '')}", "state": "on", "interfaces": route}
+        return [{"name": f"NP_R_{mac.replace('-', '')}", "state": "on", "interfaces": route,
+                 "mode": "Priority"}
                 for mac, route in self.live.items() if route in ("WAN1", "WAN2")]
 
     def setUp(self):

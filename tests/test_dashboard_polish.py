@@ -69,7 +69,7 @@ class DashboardPolish(unittest.TestCase):
 
     def test_advanced_guidance_collapses_without_hiding_safety_state(self):
         self.assertRegex(self.html, r'<details class="device-explainer"><summary>Device checks, activity notices, and pause safety</summary>')
-        self.assertIn("controls remain disabled pending WAN2 and recovery validation", self.html)
+        self.assertIn("router enforcement and recovery validation", self.html)
         self.assertIn("WAN controls are locked:", self.html)
         self.assertIn("Smart WAN on", self.html)
         self.assertIn("Smart WAN unavailable", self.html)

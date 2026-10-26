@@ -27,7 +27,8 @@ class TelegramDeviceDetails(unittest.TestCase):
                             "leasetime": "01:59:42"}],
                "reservations": [{"mac": self.MAC, "ip": "192.168.0.50", "note": "Office laptop",
                                  "enable": "on"}],
-               "policy_routes": [{"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN1"}],
+               "policy_routes": [{"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN1",
+                                  "mode": "Priority"}],
                "policy_routes_checked_at": self.now - 180}
         self.scenario.mon.router = SimpleNamespace(
             snap=SimpleNamespace(raw=raw, checked_at=self.now - 120), poll_seconds=600)

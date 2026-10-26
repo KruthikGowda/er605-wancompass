@@ -345,7 +345,8 @@ class ApiContract(Base):
         self.s.board.publish(snap)
         self.s.board.set_extra("router_raw", {
             "clients": [{"macaddr": mac, "name": "Tablet", "ipaddr": "192.168.0.121"}],
-            "policy_routes": [{"name": "NP_R_AABBCCDDEE11", "state": "on", "interfaces": "WAN1"}],
+            "policy_routes": [{"name": "NP_R_AABBCCDDEE11", "state": "on", "interfaces": "WAN1",
+                               "mode": "Priority"}],
             "policy_routes_checked_at": future,
         })
         device = json.loads(self.get("/api/devices"))["devices"][0]
@@ -540,7 +541,8 @@ class ApiContract(Base):
         self.s.board.publish(snap)
         self.s.board.set_extra("router_raw", {
             "clients": [{"macaddr": mac, "name": "Tablet", "ipaddr": "192.168.0.121"}],
-            "policy_routes": [{"name": "NP_R_AABBCCDDEE03", "state": "on", "interfaces": "WAN1"}],
+            "policy_routes": [{"name": "NP_R_AABBCCDDEE03", "state": "on", "interfaces": "WAN1",
+                               "mode": "Priority"}],
             "policy_routes_checked_at": 199.0,
         })
         device = json.loads(self.get("/api/devices"))["devices"][0]
@@ -750,7 +752,7 @@ class DashboardConsistency(unittest.TestCase):
         self.assertIn("A permanent lease may stay listed indefinitely", self.html)
         self.assertIn("not confirmed device arrival or departure", self.html)
         self.assertIn("DHCP lease time remaining", self.html)
-        self.assertIn("Internet pause/resume is not available until ACL enforcement is verified", self.html)
+        self.assertIn("Internet pause/resume is not available until router enforcement and recovery validation are complete", self.html)
         self.assertIn("ER605 ACL rules do not affect clients on the same LAN", self.html)
         self.assertIn("device may sleep or block ping", self.html)
         self.assertIn('id="presence-toggle"', self.html)

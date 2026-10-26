@@ -23,7 +23,11 @@ from netpulse.storage.pauses import blocked_macs
 
 log = logging.getLogger(__name__)
 
-ROUTE_OPTIONS = {"AUTO", "WAN1", "WAN2"}
+ROUTE_OPTIONS = {"AUTO", "WAN1", "WAN2", "WAN1_ONLY", "WAN2_ONLY"}
+PRIORITY_ROUTES = {"WAN1", "WAN2"}
+STRICT_ROUTES = {"WAN1_ONLY", "WAN2_ONLY"}
+ALL_PIN_ROUTES = PRIORITY_ROUTES | STRICT_ROUTES
+STRICT_WAN_FIRMWARE = "2.3.3 Build 20251029 Rel.18054"
 ROUTE_EXPIRY_OPTIONS = {0: "Until changed", 3600: "1 hour", 21600: "6 hours",
                         86400: "24 hours", 604800: "7 days"}
 ROUTE_FIELDS = (".name", "name", "service_type", "src_ipgroup", "dst_ipgroup", "interfaces", "timeobj",
@@ -67,7 +71,13 @@ def observed_netpulse_route(raw: dict, mac: str) -> dict:
     if state in ("off", "0", "false", "disabled"):
         route = "AUTO"
     elif state in ("on", "1", "true", "enabled") and row.get("interfaces") in ("WAN1", "WAN2"):
-        route = row["interfaces"]
+        mode = row.get("mode")
+        if mode == "Priority":
+            route = row["interfaces"]
+        elif mode == "Only":
+            route = f"{row['interfaces']}_ONLY"
+        else:
+            route = None
     else:
         route = None
     return {"route": route, "checked_at": checked_at}
@@ -88,7 +98,7 @@ def summarize_group_routes(raw: dict, members: list[str], saved_routes: dict,
                 "route_unknown_count": 0, "route_stale_count": len(members),
                 "route_readback": "stale"}
     observed = [observed_netpulse_route(raw, mac)["route"] for mac in members]
-    unknown = sum(route not in ("AUTO", "WAN1", "WAN2") for route in observed)
+    unknown = sum(route not in ROUTE_OPTIONS for route in observed)
     drift = sum(route is not None and route != saved_routes.get(mac, {}).get("route", "AUTO")
                 for mac, route in zip(members, observed))
     same = bool(observed) and all(route == observed[0] for route in observed)
@@ -127,12 +137,14 @@ class ControlError(ValueError):
 
 class RouterControl:
     def __init__(self, router: RouterWatch, db_path: str, enabled: bool = False,
-                 kill_switch: str = "/etc/netpulse/controls.disabled"):
+                 kill_switch: str = "/etc/netpulse/controls.disabled",
+                 strict_wan_enabled: bool = False):
         self.router = router
         self.client: ER605Client = router.client
         self.db_path = db_path
         self.enabled = enabled
         self.kill_switch = kill_switch
+        self.strict_wan_enabled = bool(strict_wan_enabled)
         self._firmware_store = KeyValueFile(db_path)
         self._firmware_notice_lock = threading.Lock()
         self._boot_id = _system_boot_id()
@@ -221,7 +233,11 @@ class RouterControl:
                 "firmware_reason": firmware_reason,
                 "router_age_seconds": age, "router_uptime_seconds": self.router.snap.uptime,
                 "router_uptime_age_seconds": uptime_age,
-                "features": {"route": "ready", "reservation": "ready", "qos_priority": "not_ready",
+                "strict_wan_enabled": self.strict_wan_enabled,
+                "strict_wan_available": bool(self.strict_wan_enabled and firmware_version == STRICT_WAN_FIRMWARE and ready),
+                "features": {"route": "ready", "reservation": "ready",
+                             "strict_wan": "ready" if self.strict_wan_enabled and firmware_version == STRICT_WAN_FIRMWARE and ready else "not_ready",
+                             "qos_priority": "not_ready",
                                                            "smart_failover": "not_enabled"}}
 
     def accept_firmware(self, version: str, confirmed: bool) -> dict:
@@ -267,6 +283,18 @@ class RouterControl:
     def route_state(self) -> dict[str, dict]:
         return sqlite.device_routes(self.db_path)
 
+    def _check_route_capability(self, route: str, allow_restore: bool = False) -> None:
+        if route not in STRICT_ROUTES:
+            return
+        version = getattr(self.router.snap, "firmware_version", None)
+        status = self.state()
+        if version != STRICT_WAN_FIRMWARE:
+            raise ControlError(f"Strict WAN routing is validated only for ER605 firmware {STRICT_WAN_FIRMWARE}.")
+        if not status["enabled"]:
+            raise ControlError("Router controls are locked; strict WAN route changes are unavailable.")
+        if not self.strict_wan_enabled and not allow_restore:
+            raise ControlError("Strict WAN routing is disabled in config; no Only-mode route will be written.")
+
     def set_group_smart_routing(self, group_id: int, enabled: bool,
                                 actor: str = "dashboard") -> dict:
         """Opt one fully eligible group into stable, monitor-driven WAN preference updates."""
@@ -282,6 +310,8 @@ class RouterControl:
                 raise ControlError("Add devices before enabling smart routing for this group.")
             saved = self.route_state()
             routes = {saved.get(mac, {}).get("route", "AUTO") for mac in group["members"]}
+            if routes & STRICT_ROUTES:
+                raise ControlError("Restore every strict Only route to Auto or Prefer WAN before enabling smart routing.")
             if len(routes) != 1:
                 raise ControlError("Group members have mixed saved routes; review one group route first.")
             current = next(iter(routes))
@@ -312,6 +342,12 @@ class RouterControl:
             raise ControlError("Smart routing is in its 15-minute route-change cooldown.")
         saved = self.route_state()
         routes = {saved.get(mac, {}).get("route", "AUTO") for mac in group["members"]}
+        if routes & STRICT_ROUTES:
+            raise ControlError("Smart routing is paused while this group has a strict Only route; restore Auto or Prefer WAN first.")
+        raw = self.router.snap.raw if isinstance(self.router.snap.raw, dict) else {}
+        if any(observed_netpulse_route(raw, mac).get("route") in STRICT_ROUTES
+               for mac in group["members"]):
+            raise ControlError("Smart routing will not replace an observed strict Only route; review and restore Auto or Prefer WAN first.")
         if len(routes) != 1:
             raise ControlError("Group members have mixed saved routes; smart routing stopped.")
         if next(iter(routes)) == route:
@@ -345,7 +381,8 @@ class RouterControl:
             raise ControlError("Add at least one device before changing a group route.")
         route = str(route or "").upper()
         if route not in ROUTE_OPTIONS:
-            raise ControlError("Choose Auto, WAN1, or WAN2.")
+            raise ControlError("Choose Auto, Prefer WAN 1/2, or Only WAN 1/2.")
+        self._check_route_capability(route)
         if (isinstance(expiry_seconds, bool) or not isinstance(expiry_seconds, int)
                 or expiry_seconds not in ROUTE_EXPIRY_OPTIONS):
             raise ControlError("Choose Until changed, 1 hour, 6 hours, 24 hours, or 7 days.")
@@ -373,7 +410,12 @@ class RouterControl:
                             "current": observed["route"], "saved_current": saved_route,
                             "current_expires_at": (saved.get("expires_at")
                                                     if saved_route == observed["route"]
-                                                    and saved_route in ("WAN1", "WAN2") else None)})
+                                                    and saved_route in ALL_PIN_ROUTES else None),
+                            "current_expiry_state": ({"expires_at": saved.get("expires_at"),
+                                                      "expires_monotonic": saved.get("expires_monotonic"),
+                                                      "boot_id": saved.get("boot_id")}
+                                                     if saved_route == observed["route"]
+                                                     and saved_route in ALL_PIN_ROUTES else None)})
         now = time.time()
         token = secrets.token_urlsafe(24)
         with self._lock:
@@ -382,11 +424,16 @@ class RouterControl:
                 "group_updated_at": group["updated_at"], "members": devices, "route": route,
                 "smart_routing_enabled": group["smart_routing_enabled"],
                 "actor": actor, "expiry_seconds": expiry_seconds, "expires": now + PREVIEW_SECONDS}
+        public_devices = [{k: v for k, v in device.items() if k != "current_expiry_state"}
+                          for device in devices]
         return {"token": token, "expires_in": PREVIEW_SECONDS, "group": group["name"],
-                "route": route, "expiry_label": ROUTE_EXPIRY_OPTIONS[expiry_seconds], "members": devices,
+                "route": route, "expiry_label": ROUTE_EXPIRY_OPTIONS[expiry_seconds], "members": public_devices,
                 "effect": (f"Apply {route} to all {len(devices)} listed devices. Each device keeps its own ER605 policy rule. "
-                           "These rules remain on the ER605 if the Pi is offline. Priority mode uses the router's own WAN online detection; "
-                           "if the ER605 reports the selected WAN offline, that rule stops applying. "
+                           "These rules remain on the ER605 if the Pi is offline. "
+                           + ("Only mode has no IPv4 WAN fallback through the ER605: if the selected WAN is down, these devices have no IPv4 Internet through this router. "
+                              "IPv6 and other paths are not controlled. "
+                              if route in STRICT_ROUTES else
+                              "Priority mode uses the router's own WAN online detection; if the ER605 reports the selected WAN offline, that rule stops applying. ")
                            + ("NetPulse must be running at the timed expiry to return devices to Auto; if the Pi is offline then, "
                               "the rules remain until NetPulse returns." if expiry_seconds else
                               "The preferences stay on the ER605 until changed."))}
@@ -468,7 +515,9 @@ class RouterControl:
                     # through the same confirmed, read-back-verified per-device workflow.
                     try:
                         self._refresh_transaction_uptime()
-                        rollback = self.preview(applying["mac"], applying["current"], pending["actor"], 0)
+                        rollback = self.preview(applying["mac"], applying["current"], pending["actor"], 0,
+                                               _rollback=True,
+                                               _restore_state=applying.get("current_expiry_state"))
                         self.apply(rollback["token"])
                         raw = self.router.snap.raw if isinstance(self.router.snap.raw, dict) else {}
                         checked_at = raw.get("policy_routes_checked_at")
@@ -490,7 +539,9 @@ class RouterControl:
             for device in reversed(applied):
                 try:
                     self._refresh_transaction_uptime()
-                    rollback = self.preview(device["mac"], device["current"], pending["actor"], 0)
+                    rollback = self.preview(device["mac"], device["current"], pending["actor"], 0,
+                                            _rollback=True,
+                                            _restore_state=device.get("current_expiry_state"))
                     self.apply(rollback["token"])
                 except Exception as rollback_exc:
                     rollback_errors.append(f"{device['mac']}: {type(rollback_exc).__name__}")
@@ -686,7 +737,6 @@ class RouterControl:
                 snapshot = dict(self.router.snap.raw or {})
                 snapshot["reservations"] = sanitize(latest)
                 self.router.snap.raw = snapshot
-                self.router.snap.checked_at = time.time()
         except Exception as exc:
             sqlite.log_device_reservation(self.db_path, int(time.time()), actor, mac, ip, "create", "failed",
                                            type(exc).__name__)
@@ -873,13 +923,15 @@ class RouterControl:
                 "detail": "Each DHCP reservation was individually read back and verified. "
                           "No WAN routes were changed."}
 
-    def preview(self, mac: str, route: str, actor: str, expiry_seconds: int = 0) -> dict:
+    def preview(self, mac: str, route: str, actor: str, expiry_seconds: int = 0,
+                _rollback: bool = False, _restore_state: dict | None = None) -> dict:
         if not self.state()["enabled"]:
             raise ControlError("Router controls are locked. The local kill switch is active or controls are disabled.")
         mac = normalize_mac(mac)
         route = str(route or "").upper()
         if not MAC_RE.fullmatch(mac) or route not in ROUTE_OPTIONS:
-            raise ControlError("Choose a listed device and Auto, WAN1, or WAN2.")
+            raise ControlError("Choose a listed device and Auto, Prefer WAN 1/2, or Only WAN 1/2.")
+        self._check_route_capability(route, allow_restore=_rollback)
         if (isinstance(expiry_seconds, bool) or not isinstance(expiry_seconds, int)
                 or expiry_seconds not in ROUTE_EXPIRY_OPTIONS):
             raise ControlError("Choose Until changed, 1 hour, 6 hours, 24 hours, or 7 days.")
@@ -904,11 +956,23 @@ class RouterControl:
             self._pending[token] = {"mac": mac, "ip": ip, "route": route, "actor": actor,
                                     "current": saved_current, "observed_current": current,
                                     "expiry_seconds": expiry_seconds,
+                                    "rollback": bool(_rollback),
+                                    "restore_state": _restore_state,
                                     "expires": now + PREVIEW_SECONDS}
         device_name = str(reservation.get("note") or "device")[:48]
         expiry_label = ROUTE_EXPIRY_OPTIONS[expiry_seconds]
         if route == "AUTO":
             effect = "Return this device to the ER605's normal load balancing."
+        elif route in STRICT_ROUTES:
+            wan = route.removesuffix("_ONLY")
+            expiry_note = ("NetPulse must be running at the timed expiry to remove this Only rule; if the Pi is offline, "
+                           "the device remains without WAN fallback until NetPulse returns."
+                           if expiry_seconds else "This strict rule stays until changed.")
+            effect = (f"Only {wan} for this device's IPv4 traffic through the ER605. Only mode has no WAN fallback: "
+                      f"if {wan} is down, this device has no IPv4 Internet through this router. "
+                      "IPv6 and other paths are not controlled. This strict route does not change other devices' Priority routes. "
+                      f"This rule will {('remain until changed' if expiry_seconds == 0 else 'expire after ' + expiry_label)}. "
+                      f"{expiry_note}")
         else:
             expiry_note = ("NetPulse must be running at the timed expiry to return this device to Auto; "
                            "if the Pi is offline then, the rule remains until NetPulse returns."
@@ -994,6 +1058,7 @@ class RouterControl:
             raise ControlError("Router controls were locked before confirmation; nothing was changed.")
 
         mac, target, ip, actor = pending["mac"], pending["route"], pending["ip"], pending["actor"]
+        self._check_route_capability(target, allow_restore=pending.get("rollback", False))
         self._assert_not_paused(mac)
         if actor != SMART_ROUTE_ACTOR:
             # A manual single-device change overrides the policy of any containing group.
@@ -1067,7 +1132,8 @@ class RouterControl:
                         })
 
                     first = target
-                    interfaces = first
+                    interfaces = target.removesuffix("_ONLY")
+                    route_mode = "Only" if target in STRICT_ROUTES else "Priority"
                     if route_rows:
                         route = route_rows[0][1]
                         if route.get("src_ipgroup") != group_name or route.get("dst_ipgroup") != "IPGROUP_ANY":
@@ -1077,7 +1143,7 @@ class RouterControl:
                         updated_route_before = self._fields(route, ROUTE_FIELDS)
                         current = c.get("policy_route", "policy_route") or []
                         route = self._update("policy_route", "policy_route", current, route_name, ROUTE_FIELDS,
-                                             {"interfaces": interfaces, "mode": "Priority", "state": "on"})
+                                             {"interfaces": interfaces, "mode": route_mode, "state": "on"})
                     else:
                         self._assert_enabled()
                         indices = [int(r["index"]) for r in routes
@@ -1089,13 +1155,16 @@ class RouterControl:
                         route = c.add_row("policy_route", "policy_route", routes, {
                             "name": route_name, "service_type": "ALL", "src_ipgroup": group_name,
                             "dst_ipgroup": "IPGROUP_ANY", "interfaces": interfaces, "timeobj": "Any",
-                            "mode": "Priority", "comment": "NetPulse", "state": "on",
+                            "mode": route_mode, "comment": "NetPulse", "state": "on",
                             "index": rule_index, "src": "ipgroup", "dst": "ipgroup",
                         })
-                    if (route.get("interfaces") != interfaces or route.get("mode") != "Priority"
+                    if (route.get("interfaces") != interfaces or route.get("mode") != route_mode
                             or route.get("state") != "on" or route.get("src_ipgroup") != group_name):
-                        raise RouterError("The router did not verify the selected WAN preference.")
-                    detail = (f"{first} preferred. When the router reports it offline, the pin stops applying "
+                        raise RouterError("The router did not verify the requested WAN route mode and interface.")
+                    detail = ((f"Only {interfaces} for IPv4 through the ER605; if that WAN is down, the device has no IPv4 Internet through this router. "
+                               "IPv6 and other paths are not controlled. No WAN fallback is provided. Other devices' Priority routes are unchanged.")
+                              if route_mode == "Only" else
+                              f"{interfaces} preferred. When the router reports it offline, the pin stops applying "
                               "and normal router routing resumes.")
                     if pending["expiry_seconds"]:
                         detail += (f" Returns to Auto after {ROUTE_EXPIRY_OPTIONS[pending['expiry_seconds']].lower()} while NetPulse is running; "
@@ -1109,11 +1178,15 @@ class RouterControl:
             snapshot["policy_routes_checked_at"] = applied_at
             self.router.snap.raw = snapshot
             expiry_seconds = pending["expiry_seconds"]
-            route_expires_at = int(applied_at + expiry_seconds) if expiry_seconds else None
-            expires_monotonic = time.monotonic() + expiry_seconds if expiry_seconds else None
+            restore_state = pending.get("restore_state") if target in ALL_PIN_ROUTES else None
+            route_expires_at = (restore_state.get("expires_at") if restore_state else
+                                int(applied_at + expiry_seconds) if expiry_seconds else None)
+            expires_monotonic = (restore_state.get("expires_monotonic") if restore_state else
+                                 time.monotonic() + expiry_seconds if expiry_seconds else None)
+            expiry_boot_id = restore_state.get("boot_id") if restore_state else self._boot_id
             sqlite.set_device_route(self.db_path, mac, ip, target, int(applied_at), actor,
                                     old_route, "applied", detail, route_expires_at,
-                                    expires_monotonic, self._boot_id)
+                                    expires_monotonic, expiry_boot_id)
             self._expiry_retry_after.pop(mac, None)
             self._expiry_audited.discard(mac)
         except Exception as exc:
@@ -1214,15 +1287,19 @@ class RouterControl:
                             raise ControlError("multiple NetPulse rules are present")
                         if matches:
                             _, row = matches[0]
+                            expected_interface = saved["route"].removesuffix("_ONLY")
+                            expected_mode = "Only" if saved["route"] in STRICT_ROUTES else "Priority"
                             if (row.get("src_ipgroup") != group_name or row.get("dst_ipgroup") != "IPGROUP_ANY"
-                                    or row.get("mode") != "Priority"):
+                                    or row.get("mode") != expected_mode):
                                 raise ControlError("policy row no longer matches the saved NetPulse preference")
                             if row.get("state") != "off":
-                                if row.get("interfaces") != saved["route"]:
+                                if row.get("interfaces") != expected_interface:
                                     raise ControlError("policy WAN differs from the saved preference; refusing overwrite")
                                 self._update("policy_route", "policy_route", routes, route_name, ROUTE_FIELDS,
                                              {"state": "off"})
-                    detail = "Timed preference expired; normal ER605 load balancing restored."
+                    detail = ("Timed strict Only route expired and was removed; normal ER605 routing restored."
+                              if saved["route"] in STRICT_ROUTES else
+                              "Timed preference expired; normal ER605 load balancing restored.")
                     sqlite.set_device_route(self.db_path, mac, saved["ip"], "AUTO", int(now),
                                             "system expiry", saved["route"], "applied", detail)
                     self._expiry_retry_after.pop(mac, None)
