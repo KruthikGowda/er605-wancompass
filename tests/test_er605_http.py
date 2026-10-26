@@ -137,6 +137,55 @@ class WritesAgainstFakeRouter(Base):
         self.assertEqual(delete, {"method": "delete", "params": {"index": "1", "key": "5"}})
         self.assertEqual(len(self.router.fixture["dhcps/reservation"]), 1)
 
+    def test_dhcp_reservation_delete_tolerates_other_ids_renumbering(self):
+        mac = "00-11-22-33-44-55"
+        ip = "192.168.0.150"
+        note = "NetPulse: test device"
+        self.router.fixture["dhcps/reservation"] = [
+            {"id": "5", "ip": ip, "mac": mac, "note": note, "enable": "on", "bind": "0"},
+            {"id": "6", "ip": "192.168.0.151", "mac": "00-11-22-33-44-66",
+             "note": "Other device", "enable": "on", "bind": "0"},
+        ]
+        with self.client().session() as c:
+            original_post = c._post
+
+            def renumber_other(path, form, referer="/webpages/index.html"):
+                result = original_post(path, form, referer)
+                payload = json.loads(form["data"])
+                if payload.get("method") == "delete":
+                    other = self.router.fixture["dhcps/reservation"][0]
+                    other["id"] = "1"
+                return result
+
+            c._post = renumber_other
+            c.delete_dhcp_reservation("5", mac, ip, note)
+        remaining = self.router.fixture["dhcps/reservation"]
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0]["id"], "1")
+        self.assertNotEqual(remaining[0]["mac"], mac)
+
+    def test_dhcp_reservation_delete_rejects_target_that_reappears_with_new_id(self):
+        mac = "00-11-22-33-44-55"
+        ip = "192.168.0.150"
+        note = "NetPulse: test device"
+        target = {"id": "5", "ip": ip, "mac": mac, "note": note, "enable": "on", "bind": "0"}
+        self.router.fixture["dhcps/reservation"] = [target.copy()]
+        with self.client().session() as c:
+            original_post = c._post
+
+            def target_reappears(path, form, referer="/webpages/index.html"):
+                result = original_post(path, form, referer)
+                payload = json.loads(form["data"])
+                if payload.get("method") == "delete":
+                    self.router.fixture["dhcps/reservation"].append(
+                        {**target, "id": "99", "mac": mac.replace("-", ":").lower()})
+                return result
+
+            c._post = target_reappears
+            with self.assertRaisesRegex(RouterError, "delete read-back failed"):
+                c.delete_dhcp_reservation("5", mac, ip, note)
+        self.assertEqual(self.router.fixture["dhcps/reservation"][0]["id"], "99")
+
     def test_unallowlisted_forms_and_non_np_rows_are_rejected_before_write(self):
         with self.client().session() as c:
             with self.assertRaises(ValueError):
