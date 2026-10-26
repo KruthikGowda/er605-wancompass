@@ -24,7 +24,7 @@ This roadmap tracks general project capabilities and acceptance work. It contain
 ## Known limitations
 
 - Internet pause/resume validates IPv4 only; IPv6 enforcement is not established.
-- Strict Only routing excludes IPv4 fallback through the ER605 only; IPv6, mobile data, VPNs, and other network paths are not controlled. Client traffic enforcement requires live verification.
+- Strict Only controls remain unavailable: changing an existing Priority rule to Only can leave the previous forwarding behavior active despite correct form read-back. A verified transition and recovery protocol is required before activation.
 - Live router write behavior is firmware-specific. Repository tests cannot prove network enforcement.
 - WAN2 enforcement and multirow ACL ordering must be verified on each target deployment.
 - Timed cleanup cannot run while the NetPulse host is powered off. Native router Priority failover is separate.

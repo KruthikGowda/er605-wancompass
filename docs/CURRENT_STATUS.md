@@ -15,7 +15,7 @@ This page describes repository capabilities and acceptance limits. It is not a r
 
 - Do not treat unit or simulated tests as proof of router enforcement or client failover.
 - Internet pause is IPv4 only. IPv6 behavior is unverified and may provide another path.
-- Strict Only routing has no IPv4 WAN fallback through the ER605. It does not control IPv6, mobile data, VPNs, or other network paths; client traffic behavior still needs a controlled live drill.
+- Strict Only controls are unavailable pending a reliable mode-transition protocol. On the reviewed firmware, an existing Priority rule changed to Only can read back correctly while traffic continues through the previous WAN. Creating a new Only rule is not sufficient validation of later edits.
 - Live router writes are opt-in and must be tested on the exact firmware in use. Obtain explicit authorization from the network owner, review each preview, and verify the write by reading the router state back. Stop if firmware changes or state is ambiguous.
 - Validate every WAN and multirow ACL behavior with a controlled endpoint before enabling Internet controls. A single-WAN test does not establish dual-WAN behavior.
 - Timed cleanup requires NetPulse to be running. The router's native Priority WAN failover can continue while NetPulse is offline; these are separate mechanisms.

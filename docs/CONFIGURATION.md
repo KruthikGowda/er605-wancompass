@@ -43,7 +43,7 @@ Thresholds set absolute and baseline-relative limits for degraded/bad health and
 | `credentials_file` | `/etc/netpulse/router.toml` | Separate protected router credentials and certificate pin. |
 | `controls_enabled` | `false` | Allow owner-reviewed manual device route/reservation operations after readiness checks. |
 | `internet_controls_enabled` | `false` | Allow IPv4 Internet pause/resume only after exact firmware and live acceptance. |
-| `strict_wan_controls_enabled` | `false` | Offer explicit `Only WAN 1/2` strict routes on the code-gated ER605 firmware. Only has no WAN fallback and remains off until separately enabled. |
+| `strict_wan_controls_enabled` | `false` | Reserved for staged `Only WAN 1/2` controls. Keep false: mode-transition forwarding has not passed acceptance; the code-level validation gate also prevents activation. |
 | `protected_macs` | `[]` | Additional owner-designated client exclusions for Internet pause. |
 | `kill_switch` | `/etc/netpulse/controls.disabled` | Presence of this file blocks router writes. |
 | `presence_probes_enabled` | `false` | Optional LAN ICMP hints; no reply does not prove a device is offline. |
@@ -52,7 +52,7 @@ Thresholds set absolute and baseline-relative limits for degraded/bad health and
 | `syslog_enabled` | `false` | Receive optional DHCP allocation hints. Router log forwarding must be separately enabled by its owner. |
 | `syslog_port` | `514` | UDP port; messages are accepted only from the configured router host. |
 
-Keep `controls_enabled`, `internet_controls_enabled`, and `strict_wan_controls_enabled` false by default. Turning a control on is an operator decision and does not itself prove the router is ready. Readiness, a fresh preview, owner confirmation, exact object read-back, audit state, firmware review, and the kill switch still apply. Permanent Internet pause and strict Only routing are limited in code to the reviewed ER605 firmware listed in [the API notes](er605-api.md). Strict Only has no WAN fallback and must not be treated as a failover test.
+Keep `controls_enabled`, `internet_controls_enabled`, and `strict_wan_controls_enabled` false by default. Turning a control on is an operator decision and does not itself prove the router is ready. Readiness, a fresh preview, owner confirmation, exact object read-back, audit state, firmware review, and the kill switch still apply. Permanent Internet pause and strict Only routing are limited in code to the reviewed ER605 firmware listed in [the API notes](er605-api.md). Strict Only is intended to exclude fallback, but existing-rule mode changes have not passed forwarding validation. Keep it disabled; a configuration flag cannot bypass the code-level validation gate.
 
 The global `mode = "dry-run"` and the separate `[router]` controls have different roles: recommendations remain non-mutating even if a user later explicitly enables an eligible router control.
 
