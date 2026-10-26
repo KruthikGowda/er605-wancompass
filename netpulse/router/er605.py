@@ -618,7 +618,7 @@ class ER605Client:
             "index": str(index), "key": str(row_id)}})})
         if str(result.get("error_code")) != "0":
             raise RouterError(f"dhcps/reservation delete error {result.get('error_code')}")
-        if any(isinstance(r, dict) and str(r.get("id")) == str(row_id)
-               and str(r.get("mac", "")).upper() == mac and str(r.get("ip")) == ip
+        if any(isinstance(r, dict)
+               and str(r.get("mac", r.get("macaddr", ""))).replace(":", "-").upper() == mac
                for r in (self.get("dhcps", "reservation") or [])):
             raise RouterError("DHCP reservation delete read-back failed")
