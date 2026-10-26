@@ -195,6 +195,46 @@ class GroupPickerConversations(unittest.TestCase):
         self.assertEqual(text, "Group updated.")
         self.assertEqual(self.group_applies, [("group-secret-2", OWNER)])
 
+    def test_group_actions_keep_native_routing_and_bandwidth_with_group_management(self):
+        self.actions = [
+            {"id": "auto", "label": "Autobalance", "enabled": True},
+            {"id": "prefer_wan2", "label": "Prefer WAN 2", "enabled": True},
+        ]
+        route_previews, route_applies = [], []
+
+        def route_preview(payload, chat):
+            route_previews.append((payload, chat))
+            return {"text": "Review route change for Home", "confirm_token": "route-secret",
+                    "fingerprint": repr(payload)}
+
+        self.picker._preview = route_preview
+        self.picker._apply = lambda token, chat: route_applies.append((token, chat)) or "Routed."
+
+        _, markup = self.picker.begin("groups", OWNER, OWNER)
+        text, markup = self.picker.message("1", OWNER, OWNER)
+        self.assertIn("Autobalance", text)
+        self.assertIn("Prefer WAN 2", text)
+        self.assertIn("Bandwidth and priority", text)
+        self.assertIn("Add devices", text)
+        text, markup = self._tap(self._button(markup, "Prefer WAN 2"))
+        self.assertIn("Review route change for Home", text)
+        self.assertEqual(route_previews[0], ({"kind": "groups", "items": [self.groups[0]],
+                                             "action": "prefer_wan2"}, OWNER))
+        self.assertNotIn("route-secret", text)
+        self.assertEqual(self.group_previews, [])
+        text, _ = self._tap(self._button(markup, "Confirm"))
+        self.assertEqual(text, "Routed.")
+        self.assertEqual(route_applies, [("route-secret", OWNER)])
+        self.assertEqual(len(route_previews), 2, "confirmation rechecks the same group route review")
+
+    def test_group_router_actions_require_one_group_selection(self):
+        self.groups.append({"id": 8, "name": "Office", "count": 0, "members": [], "updated_at": 100})
+        _, markup = self.picker.begin("groups", OWNER, OWNER)
+        text, markup = self.picker.message("1,2", OWNER, OWNER)
+        self.assertIn("Choose one group at a time", text)
+        self.assertNotIn("Choose an action", text)
+        self.assertNotIn("Confirm", str(markup))
+
     def test_remove_list_includes_offline_group_members_and_checks_snapshot(self):
         offline = "02-00-00-00-00-03"
         self.groups[0]["members"] = [MAC1, offline]
