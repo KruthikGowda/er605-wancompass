@@ -12,12 +12,13 @@ def rule(suffix="A"):
             "position": "", "flag": "1", "user": "1"}
 
 
-def firmware_row(canonical):
+def firmware_row(canonical, index=0):
     row = dict(canonical)
     row["zone"] = ["LAN"]
     row.pop("position")
-    row["id"] = "row-1"
-    row["key"] = "key-0"
+    row.update({"id": f"row-{index + 1}", "key": f"key-{index}", "index": index,
+                "srcIf": "", "destIf": "", "dst_domain": {}, "t_label": ["LAN"],
+                "v6flag": "0"})
     return row
 
 
@@ -35,7 +36,7 @@ class Protocol(ER605Client):
         self.payloads.append(payload)
         params = payload["params"]
         if payload["method"] == "add":
-            self.rows.insert(params["index"], params["new"])
+            self.rows.insert(params["index"], firmware_row(params["new"], params["index"]))
         elif payload["method"] == "delete":
             self.rows.pop(int(params["index"]))
         return {"error_code": "0"}
@@ -65,10 +66,12 @@ class PauseACLProtocolTests(unittest.TestCase):
         cli = Protocol([raw_prior.copy()])
         added = cli.add_pause_acl_rule([raw_prior], new)
         self.assertEqual(added["name"], new["name"])
+        self.assertTrue(pause_acl_effective_match(added, new))
         self.assertEqual(cli.payloads[0]["params"]["index"], 1)
         self.assertEqual(cli.payloads[0]["params"]["key"], "add")
         cli.delete_pause_acl_rule(new["name"], new)
         self.assertEqual([r["name"] for r in cli.rows], [prior["name"]])
+        self.assertEqual(canonical_pause_acl_row(cli.rows[0]), prior)
 
     def test_refuses_owner_rows_duplicates_and_malformed_rows(self):
         owner = dict(rule("A"), name="NP_TEST_P_" + "C" * 32)
@@ -103,6 +106,19 @@ class PauseACLProtocolTests(unittest.TestCase):
         self.assertTrue(pause_acl_effective_match(observed, expected))
         observed["unknown_filter"] = "changed"
         self.assertIsNone(canonical_pause_acl_row(observed))
+
+    def test_only_exact_firmware_metadata_shapes_are_tolerated(self):
+        expected = rule()
+        observed = firmware_row(expected)
+        self.assertEqual(canonical_pause_acl_row(observed), expected)
+        for key, bad_value in (("srcIf", "WAN1"), ("destIf", ["LAN"]),
+                               ("dst_domain", {"domain": "example.invalid"}),
+                               ("t_label", ["WAN"]), ("v6flag", 0), ("v6flag", "1")):
+            changed = dict(observed)
+            changed[key] = bad_value
+            with self.subTest(key=key, value=bad_value):
+                self.assertIsNone(canonical_pause_acl_row(changed))
+                self.assertFalse(pause_acl_effective_match(changed, expected))
 
 
 if __name__ == "__main__":

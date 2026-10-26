@@ -74,9 +74,14 @@ def canonical_pause_acl_row(observed: object) -> dict | None:
     keys = ("name", "policy", "service", "iptype", "zone", "is_src", "src", "is_dst", "dest",
             "time", "states", "position", "flag", "user")
     required = set(keys) - {"position"}
+    optional_metadata = {"id", "key", "index", ".name", "srcIf", "destIf", "dst_domain", "t_label", "v6flag"}
     if (not required.issubset(observed)
-            or set(observed) - set(keys) - {"id", "key", "index", ".name"}):
+            or set(observed) - set(keys) - optional_metadata):
         return None
+    neutral_metadata = {"srcIf": "", "destIf": "", "dst_domain": {}, "t_label": ["LAN"], "v6flag": "0"}
+    for key, value in neutral_metadata.items():
+        if key in observed and observed[key] != value:
+            return None
     row = {key: observed[key] for key in keys if key in observed}
     # Position is an add-form hint, not an effective filtering predicate.
     row["position"] = ""
