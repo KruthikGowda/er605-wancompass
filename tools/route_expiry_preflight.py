@@ -47,7 +47,7 @@ def imminent_route_expiry_count(db_path: str, now: int | None = None,
 
     count = 0
     for route in routes.values():
-        if not isinstance(route, dict) or route.get("route") not in ("WAN1", "WAN2"):
+        if not isinstance(route, dict) or route.get("route") not in ("WAN1", "WAN2", "WAN1_ONLY", "WAN2_ONLY"):
             continue
         if route.get("expires_at") is None:
             continue

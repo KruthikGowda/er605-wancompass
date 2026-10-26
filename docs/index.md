@@ -11,6 +11,8 @@
 
 ## Features and operations
 
+- [Everyday controls](CONTROLS.md): device/group lists, numbered replies, one review, and automatic reservation preparation.
+- [Optional administration access](ADMIN_ACCESS.md): password-free status/readiness/restart with a restricted helper.
 - [ER605 API notes](er605-api.md): API forms, certificate pinning, firmware gates, owned objects, ACL, and write safety.
 - [Internet controls](internet-controls.md): IPv4 device/group pause and resume, commands, and activation checks.
 - [Live validation runbook](LIVE_VALIDATION_RUNBOOK.md): tests requiring an authorized live deployment.

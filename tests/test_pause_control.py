@@ -293,6 +293,18 @@ class PauseControlTests(unittest.TestCase):
         self.assertEqual(self.client.acls, [])
         self.assertEqual(self.control.records(), [])
 
+    def test_group_version_change_with_same_members_invalidates_pause_review(self):
+        db = sqlite3.connect(self.path)
+        db.executescript(sqlite.SCHEMA)
+        db.close()
+        group = sqlite.save_device_group(self.path, "Family", [MAC], int(time.time()))
+        preview = self.control.preview_group(group["id"], "pause", "owner", 3600)
+        sqlite.save_device_group(self.path, "Family", [MAC], int(time.time()) + 1, group["id"])
+        with self.assertRaisesRegex(ControlError, "name or membership changed"):
+            self.control.apply(preview["token"], "owner")
+        self.assertEqual(self.client.acls, [])
+        self.assertEqual(self.control.records(), [])
+
     def test_group_resume_rollback_restores_exact_prior_deadline_and_rule(self):
         second = "02-00-00-00-00-02"
         second_ip = "10.77.0.136"

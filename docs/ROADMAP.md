@@ -6,8 +6,9 @@ This roadmap tracks general project capabilities and acceptance work. It contain
 
 - Dual-WAN IPv4 health monitoring, learned baselines, scoring, history, and a local dashboard.
 - Monitor-only WAN recommendations, optional Telegram alerts and reports, and configurable speed tests.
-- Optional router inventory, local device labels, and group management.
+- Optional router inventory, local device labels, and group management. Telegram supports list-based device actions and previewed group create, add, remove, rename, and delete operations; membership edits preserve device routes and pause intents.
 - Owner-reviewed per-device and group WAN preferences with verification, audit records, recovery checks, and opt-in Smart WAN.
+- On-demand per-device router RX/TX estimates derived from ER605 byte-counter deltas and a fresh unique DHCP binding, cached for up to 15 seconds. The measurement does not establish client upload/download semantics, per-WAN attribution, or QoS behavior.
 - IPv4 device/group pause and resume with durable intent, timed cleanup, repair flow, and audit history. Keep activation disabled until the exact firmware passes live acceptance.
 - Optional Home Assistant read-only REST examples and SQLite backup support.
 
@@ -23,10 +24,11 @@ This roadmap tracks general project capabilities and acceptance work. It contain
 ## Known limitations
 
 - Internet pause/resume validates IPv4 only; IPv6 enforcement is not established.
+- Strict Only routing excludes IPv4 fallback through the ER605 only; IPv6, mobile data, VPNs, and other network paths are not controlled. Client traffic enforcement requires live verification.
 - Live router write behavior is firmware-specific. Repository tests cannot prove network enforcement.
 - WAN2 enforcement and multirow ACL ordering must be verified on each target deployment.
 - Timed cleanup cannot run while the NetPulse host is powered off. Native router Priority failover is separate.
-- Reliable passive per-WAN traffic attribution is not available in the current implementation; speed tests do not automatically avoid busy LAN periods.
+- Device RX/TX telemetry is router-side and per-IP; per-WAN attribution and validated client upload/download semantics are not available. QoS priority and bandwidth enforcement are not implemented by this telemetry. Speed tests do not automatically avoid busy LAN periods.
 - Off-host backup reliability depends on operator storage, mount, credentials, and restore testing.
 - Home Assistant examples are read-only and require validation in the target Home Assistant installation.
 

@@ -190,7 +190,7 @@ class PauseControl:
         return {"mac": mac, "ip": ip, "name": str(lease[0].get("hostname", lease[0].get("name", "Home device")))[:80]}
 
     def _preview(self, members, action, actor, duration_seconds, management_ip=None, group_id=None,
-                 group_name=None, full_group_members=None):
+                 group_name=None, full_group_members=None, group_updated_at=None):
         if action not in ("pause", "resume"):
             raise ControlError("Choose pause or resume.")
         if isinstance(duration_seconds, bool) or duration_seconds not in DURATIONS:
@@ -223,7 +223,8 @@ class PauseControl:
         payload = {"action": action, "actor": actor.strip(), "targets": targets,
                    "duration_seconds": duration_seconds, "group_id": group_id,
                    "group_members": list(full_group_members or [t["mac"] for t in targets]),
-                   "group_name": group_name, "expires": time.time() + TOKEN_SECONDS,
+                   "group_name": group_name, "group_updated_at": group_updated_at,
+                   "expires": time.time() + TOKEN_SECONDS,
                    "management_ip": management_ip}
         with self._lock:
             self._pending = {k: v for k, v in self._pending.items() if v["expires"] > time.time()}
@@ -253,7 +254,7 @@ class PauseControl:
             if not targets:
                 raise ControlError("No group members have a saved pause intent to resume.")
         return self._preview(targets, action, actor, duration_seconds, management_ip, group_id,
-                             group["name"], group["members"])
+                             group["name"], group["members"], group["updated_at"])
 
     def _ensure_allowed(self, action="pause"):
         status = self.state()
@@ -280,8 +281,10 @@ class PauseControl:
             raise ControlError("The confirmation actor differs from the reviewed actor.")
         if p["group_id"] is not None:
             group = next((g for g in sqlite.device_groups(self.db_path) if g["id"] == p["group_id"]), None)
-            if not group or group["members"] != p["group_members"]:
-                raise ControlError("Group membership changed after review; create a fresh pause review.")
+            if (not group or group["name"] != p["group_name"]
+                    or group["updated_at"] != p["group_updated_at"]
+                    or group["members"] != p["group_members"]):
+                raise ControlError("Group name or membership changed after review; create a fresh pause review.")
         self._ensure_allowed(p["action"])
         done = []
         with self._router_write_lock:

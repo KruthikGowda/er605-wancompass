@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as dt
+import json
 import logging
 import math
 import re
@@ -44,6 +45,9 @@ from netpulse.router.er605 import ER605Client, RouterError
 from netpulse.router.control import (ControlError, RouterControl, observed_netpulse_route,
                                      summarize_group_routes)
 from netpulse.router.pause import PauseControl
+from netpulse.router.actions import ActionControl
+from netpulse.devices.group_control import GroupControl
+from netpulse.router.traffic import DeviceTraffic
 from netpulse.router.watch import RouterEvent, RouterWatch
 from netpulse.router.syslog import DhcpAllocation, RouterSyslogProtocol
 from netpulse.speedtest import SpeedResult, SpeedTester
@@ -54,6 +58,12 @@ from netpulse import system_health
 from netpulse.web import app as web
 
 log = logging.getLogger("netpulse")
+
+
+def _route_preference(route):
+    if route in ("WAN1_ONLY", "WAN2_ONLY"):
+        return f"Only {route.removesuffix('_ONLY')} (no fallback)"
+    return "Auto" if route == "AUTO" else f"Prefer {route}"
 
 WORD = {State.DEGRADED: "slow", State.BAD: "bad", State.OFFLINE: "down", State.HEALTHY: "healthy"}
 MASS_DEVICE_MISSING_THRESHOLD = 3
@@ -114,12 +124,16 @@ class Monitor:
         self.board = board
         self.router = router
         self.router_control = (RouterControl(router, cfg.db_path, cfg.router.controls_enabled,
-                                             cfg.router.kill_switch) if router else None)
+                                             cfg.router.kill_switch,
+                                             strict_wan_enabled=cfg.router.strict_wan_controls_enabled) if router else None)
         self.pause_control = (PauseControl(
             self.router_control, cfg.db_path,
             enabled=cfg.router.internet_controls_enabled,
             protected_macs=cfg.router.protected_macs,
         ) if self.router_control else None)
+        self.action_control = ActionControl(self.router_control, self.pause_control) if self.router_control else None
+        self.group_control = GroupControl(cfg.db_path, lambda: self.bot_handlers()["quick_choices"]())
+        self.device_traffic = DeviceTraffic(router) if router else None
         self.baselines = Baselines(storage.load_baselines())
         self.trackers = {w.name: WanTracker(w.name, cfg.window_seconds, cfg.thresholds) for w in cfg.wans}
         self.labels = {w.name: w for w in cfg.wans}
@@ -1008,6 +1022,157 @@ class Monitor:
         self.alerter.notifier.send(self.weekly_digest(now, title))
 
     def bot_handlers(self) -> dict:
+        def quick_choices():
+            control = self.action_control
+            snap = getattr(self.router, "snap", None)
+            raw = getattr(snap, "raw", None) or self.board.get_extra("router_raw") or {}
+            age = age_seconds(getattr(snap, "checked_at", None), self.clock())
+            fresh = age is not None and age <= max(300, self.cfg.router.poll_minutes * 120)
+            labels = sqlite.device_labels(self.cfg.db_path)
+            devices = {}
+            counts = {}
+            address_owners = {}
+            for row in raw.get("clients", []):
+                if not isinstance(row, dict):
+                    continue
+                mac = normalize_mac(row.get("macaddr", row.get("mac", "")))
+                if not re.fullmatch(r"[0-9A-F]{2}(?:-[0-9A-F]{2}){5}", mac):
+                    continue
+                ip = str(row.get("ipaddr", row.get("ip", "")))
+                counts[mac] = counts.get(mac, 0) + 1
+                address_owners.setdefault(ip, set()).add(mac)
+                devices[mac] = {"mac": mac, "ip": ip,
+                                "name": _single_line_device_name(labels.get(mac) or row.get("name")),
+                                "listed": bool(fresh),
+                                "protected": bool(mac in self.cfg.router.protected_macs or
+                                                  (control and control.routes.is_local_device(mac)))}
+            for device in devices.values():
+                device["ambiguous"] = counts[device["mac"]] != 1 or len(address_owners[device["ip"]]) != 1
+            for record in self.pause_control.records() if self.pause_control else []:
+                mac = record.get("mac")
+                if mac and record.get("status") != "resumed" and mac not in devices:
+                    devices[mac] = {"mac": mac, "ip": str(record.get("ip") or ""),
+                                    "name": _single_line_device_name(record.get("label")),
+                                    "listed": False,
+                                    "saved_pause": True}
+            groups = [{"id": group["id"], "name": _single_line_device_name(group["name"]),
+                       "count": len(group["members"]), "members": list(group["members"]),
+                       "updated_at": group["updated_at"]} for group in sqlite.device_groups(self.cfg.db_path)]
+            for group in groups:
+                for mac in group["members"]:
+                    if mac not in devices:
+                        known = sqlite.known_device(self.cfg.db_path, mac) or {}
+                        devices[mac] = {"mac": mac, "name": _single_line_device_name(labels.get(mac) or known.get("name")),
+                                        "ip": str(known.get("ip") or ""), "listed": False}
+            return {"devices": sorted(devices.values(), key=lambda d: (d["name"].casefold(), d["mac"])),
+                    "groups": groups, "actions": control.state()["actions"] if control else []}
+
+        def quick_group_preview(payload, chat):
+            try:
+                if not isinstance(payload, dict):
+                    raise ControlError("Choose a group action from the menu.")
+                preview = self.group_control.preview(action=payload.get("action"), actor=f"telegram:{chat}",
+                    group_id=payload.get("group_id"), macs=payload.get("macs"), name=payload.get("name"))
+                lines = [f"Review group: {_single_line_device_name(preview['group'])}", preview["effect"]]
+                for kind in ("added", "removed"):
+                    for item in preview.get(kind, []):
+                        verb = "Add" if kind == "added" else "Remove"
+                        lines.append(f"{verb}: {_single_line_device_name(item.get('name'))} · {item.get('ip') or 'IP unavailable'}")
+                text = "\n".join(lines)
+                if len(text) > 3500:
+                    return {"text": "Too many devices for one chat review. Select fewer devices, or review this group in dashboard."}
+                stable = {key: value for key, value in preview.items() if key not in ("token", "expires_in")}
+                return {"text": text, "confirm_token": preview["token"],
+                        "fingerprint": preview.get("fingerprint") or json.dumps(stable, sort_keys=True)}
+            except (ControlError, ValueError, TypeError) as exc:
+                return {"text": str(exc)}
+
+        def quick_group_apply(token, chat):
+            try:
+                result = self.group_control.apply(token, actor=f"telegram:{chat}")
+                return {"text": f"Done. {_single_line_device_name(result['group'])}: "
+                                f"{result['action']} confirmed. {result['effect']}"}
+            except (ControlError, ValueError) as exc:
+                return {"text": str(exc)}
+
+        def quick_bandwidth(payload, chat):
+            items = payload.get("items", []) if isinstance(payload, dict) else []
+            macs = []
+            groups = {group["id"]: group for group in sqlite.device_groups(self.cfg.db_path)}
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("mac"):
+                    macs.append(item["mac"])
+                elif item.get("id") in groups:
+                    macs.extend(groups[item["id"]]["members"])
+            lines = ["Bandwidth and priority"]
+            if self.device_traffic is not None and macs:
+                report = self.device_traffic.read(list(dict.fromkeys(macs)))
+                names = {item["mac"]: item["name"] for item in quick_choices()["devices"]}
+                for item in report.get("devices", [])[:16]:
+                    name = _single_line_device_name(names.get(item["mac"]))
+                    if item.get("available"):
+                        lines.append(f"{name}: RX {item['rx_mbps']:.2f} Mbps · TX {item['tx_mbps']:.2f} Mbps")
+                    else:
+                        lines.append(f"{name}: rate unavailable · {item.get('reason') or 'No fresh IP match'}")
+                if report.get("available"):
+                    lines.append(f"Router-observed IPv4 traffic over {report.get('sample_seconds', 0):.1f}s; "
+                                 f"sample age {report.get('age_seconds', 0):.0f}s. RX/TX use router directions.")
+                elif report.get("reason"):
+                    lines.append(report["reason"])
+            else:
+                lines.append("Device traffic measurements are unavailable until the router is configured and fresh.")
+            lines.extend(["WAN speed tests measure a shared connection, not a device's current speed.",
+                          "Per-device bandwidth caps and traffic priority are unavailable until the firmware's rule interface is verified. "
+                          "WAN preference selects a connection; it does not reserve bandwidth or set traffic priority."])
+            return {"text": "\n".join(lines), "actions": []}
+
+        def quick_preview(payload, chat):
+            if self.action_control is None:
+                return {"text": "Router controls are not configured."}
+            try:
+                if not isinstance(payload, dict) or payload.get("kind") not in ("device", "group", "devices", "groups"):
+                    raise ControlError("Choose devices or a group from the current list.")
+                items = payload.get("items")
+                if not isinstance(items, list) or not items or any(not isinstance(i, dict) for i in items):
+                    raise ControlError("Choose devices or a group from the current list.")
+                if payload["kind"] in ("group", "groups"):
+                    if len(items) != 1:
+                        raise ControlError("Choose one group per action.")
+                    target = {"group_id": items[0].get("id")}
+                else:
+                    target = {"macs": [item.get("mac") for item in items]}
+                action = payload.get("action")
+                duration = payload.get("duration_seconds", 3600 if action == "pause" else 0)
+                preview = self.action_control.preview(**target, action=action,
+                                                      actor=f"telegram:{chat}", duration_seconds=duration)
+                members = preview["members"]
+                lines = [f"Review {len(members)} device(s)", str(preview.get("effect") or "")]
+                for member in members:
+                    name = _single_line_device_name(member.get("name"))
+                    suffix = " · automatic DHCP reservation" if member.get("reservation_needed") else ""
+                    lines.append(f"• {name} · {member['ip']}{suffix}")
+                if preview.get("reservation_count"):
+                    lines.append(f"Creates {preview['reservation_count']} reservation(s) for the reviewed current IPs; devices stay on automatic DHCP.")
+                text = "\n".join(lines)
+                if len(text) > 3500:
+                    return {"text": "Too many devices for one chat review. Select fewer devices, or review this group in dashboard."}
+                stable = {key: preview.get(key) for key in ("action", "members", "group", "effect", "reservation_count")}
+                return {"text": text, "confirm_token": preview["token"],
+                        "fingerprint": preview.get("fingerprint") or json.dumps(stable, sort_keys=True, separators=(",", ":"))}
+            except (ControlError, ValueError, TypeError) as exc:
+                return {"text": str(exc)}
+
+        def quick_apply(token, chat):
+            if self.action_control is None:
+                return {"text": "Router controls are not configured."}
+            try:
+                result = self.action_control.apply(token, actor=f"telegram:{chat}")
+                return {"text": f"Done. Applied the reviewed action to {result['count']} device(s)."}
+            except (ControlError, ValueError) as exc:
+                return {"text": str(exc)}
+
         def status():
             snap = self.board.get()
             return summary.status_text(snap) if snap.get("updated") else "Starting up, try again in a minute."
@@ -1335,18 +1500,18 @@ class Monitor:
                 return (time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
                         if age_seconds(ts, now) is not None else "time unknown")
 
-            if route and route.get("route") in ("WAN1", "WAN2"):
+            if route and route.get("route") in ("WAN1", "WAN2", "WAN1_ONLY", "WAN2_ONLY"):
                 until = route.get("expires_at")
                 expiry = (time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
                           if until else "until changed")
-                preference = f"Prefer {route['route']} until {expiry}"
+                preference = f"{_route_preference(route['route'])} until {expiry}"
             else:
                 preference = "Auto (no saved NetPulse WAN pin)"
             actual_route = observed["route"]
             if actual_route is None:
                 router_rule = "ER605 NetPulse rule: unavailable or ambiguous in the last policy-rule read."
             else:
-                observed_label = "Auto" if actual_route == "AUTO" else f"Prefer {actual_route}"
+                observed_label = _route_preference(actual_route)
                 checked = observed["checked_at"]
                 checked_age_seconds = age_seconds(checked, now)
                 if checked_age_seconds is not None:
@@ -1443,9 +1608,9 @@ class Monitor:
                             preference_text = "Auto"
                         elif saved.get("expires_at"):
                             until = time.strftime("%Y-%m-%d %H:%M", time.localtime(saved["expires_at"]))
-                            preference_text = f"Prefer {preference} until {until}"
+                            preference_text = f"{_route_preference(preference)} until {until}"
                         else:
-                            preference_text = f"Prefer {preference} until changed"
+                            preference_text = f"{_route_preference(preference)} until changed"
                         lines.append(f"• {label}: {mac} ({ip or 'IP unavailable'}) · {preference_text}")
                 if len(lines) == 1:
                     lines.append("No enabled DHCP reservations are visible. Reserve a device in Omada first.")
@@ -1558,6 +1723,7 @@ class Monitor:
                                   for mac in group["members"]}
                 current = next(iter(current_routes)) if len(current_routes) == 1 else "MIXED"
                 current_label = ("Auto balance" if current == "AUTO" else
+                                 _route_preference(current) if current in ("WAN1_ONLY", "WAN2_ONLY") else
                                  f"Prefer {self.display(current)}" if current in ("WAN1", "WAN2") else
                                  "Mixed across members")
                 lines.append(f"  Saved NetPulse route preference: {current_label}. "
@@ -1927,12 +2093,12 @@ class Monitor:
 
         def pause_status_reason():
             if not self.pause_control:
-                return "Internet pause has not been enabled. Awaiting WAN2 and recovery validation."
+                return "Internet pause has not been enabled. Awaiting router enforcement and recovery validation."
             state = self.pause_control.state()
             if state.get("enabled"):
                 return None
             if not state.get("configured"):
-                return "Internet pause has not been enabled. Awaiting WAN2 and recovery validation."
+                return "Internet pause has not been enabled. Awaiting router enforcement and recovery validation."
             return "Internet pause is temporarily unavailable; router safety checks need attention."
 
         def format_pause_preview(preview):
@@ -1999,7 +2165,7 @@ class Monitor:
 
         def paused():
             if not self.pause_control:
-                return "Internet pause has not been enabled. Awaiting WAN2 and recovery validation."
+                return "Internet pause has not been enabled. Awaiting router enforcement and recovery validation."
             records = self.pause_control.records()
             if not records:
                 return "No devices currently have a saved Internet pause."
@@ -2073,6 +2239,12 @@ class Monitor:
 
         return {
             "speed": speed,
+            "quick_choices": quick_choices,
+            "quick_preview": quick_preview,
+            "quick_apply": quick_apply,
+            "quick_group_preview": quick_group_preview,
+            "quick_group_apply": quick_group_apply,
+            "quick_bandwidth": quick_bandwidth,
             "omada": omada,
             "route": route,
             "route_confirm": route_confirm,
@@ -2100,7 +2272,9 @@ class Monitor:
             "mute": mute,
             "unmute": unmute,
             "help": lambda: HELP,
-            "start": lambda: "👋 Hi! " + HELP + "\n\n" + status(),
+            "start": lambda: "WANCompass is ready. Tap Devices or Groups, pick from the list, "
+                             "and choose an action. Missing DHCP reservations are handled in the same review. "
+                             "Help / More has reports and diagnostics.\n\n" + status(),
         }
 
     # --- snapshot & storage ---
@@ -2248,6 +2422,9 @@ async def run_async(cfg: Config) -> None:
     board.set_extra("speedtest", mon)
     board.set_extra("router_control", mon.router_control)
     board.set_extra("pause_control", mon.pause_control)
+    board.set_extra("action_control", mon.action_control)
+    board.set_extra("group_control", mon.group_control)
+    board.set_extra("device_traffic", mon.device_traffic)
     board.set_extra("device_presence_settings", presence_settings)
     board.set_extra("device_presence_enabled", presence_settings.enabled)
     board.set_extra("device_presence_interval_seconds", cfg.router.presence_probe_interval_seconds)

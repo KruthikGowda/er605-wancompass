@@ -44,6 +44,8 @@ BUTTONS = {
     "📱 Devices": "devices",
     "👥 Groups": "groups",
     "❔ Help": "help",
+    "❔ Help / More": "more",
+    "🏠 Main menu": "home",
 }
 COMMANDS = {"/start": "start", "/status": "status", "/pi": "pi", "/today": "today", "/week": "week",
             "/speed": "speed", "/mute": "mute",
@@ -59,16 +61,24 @@ COMMANDS = {"/start": "start", "/status": "status", "/pi": "pi", "/today": "toda
             "/pause": "pause", "/resume": "resume", "/paused": "paused",
             "/group_pause": "group_pause", "/group_resume": "group_resume",
             "/pause_confirm": "pause_confirm",
-            "/invite": "invite", "/close": "close", "/people": "people"}
+            "/invite": "invite", "/close": "close", "/people": "people", "/cancel": "cancel"}
 OWNER_ONLY = {"invite", "close", "people", "route", "route_confirm", "reserve", "reserve_confirm",
               "groups", "group_reserve", "group_reserve_confirm", "group_suggest",
               "group_route", "group_confirm", "group_smart", "device", "devices"}
 OWNER_ONLY.update({"pause", "resume", "paused", "group_pause", "group_resume", "pause_confirm"})
 KEYBOARD = {
-    "keyboard": [[{"text": "📶 Status"}, {"text": "🩺 Pi health"}],
-                 [{"text": "📈 Last 24h"}, {"text": "📊 Last 7d"}],
-                 [{"text": "📱 Devices"}, {"text": "👥 Groups"}],
-                 [{"text": "🧭 Route a device"}, {"text": "❔ Help"}]],
+    "keyboard": [[{"text": "📶 Status"}],
+                 [{"text": "📱 Devices"}],
+                 [{"text": "👥 Groups"}],
+                 [{"text": "❔ Help / More"}]],
+    "resize_keyboard": True,
+    "is_persistent": True,
+}
+MORE_KEYBOARD = {
+    "keyboard": [[{"text": "🩺 Pi health"}, {"text": "📈 Last 24h"}],
+                 [{"text": "📊 Last 7d"}, {"text": "⚡ Speed test"}],
+                 [{"text": "🔕 Mute 1h"}, {"text": "🔔 Unmute"}],
+                 [{"text": "🛠 Using Omada"}, {"text": "🏠 Main menu"}]],
     "resize_keyboard": True,
     "is_persistent": True,
 }
@@ -82,9 +92,8 @@ MENU = [
     {"command": "today", "description": "📈 Summary of the last 24 hours"},
     {"command": "week", "description": "📊 Summary of the last 7 days"},
     {"command": "speed", "description": "⚡ Speed test both connections now"},
-    {"command": "devices", "description": "List current router devices (owner only)"},
-    {"command": "groups", "description": "List device groups (owner only)"},
-    {"command": "route", "description": "Preview a device WAN route (owner only)"},
+    {"command": "devices", "description": "Choose a device (owner only)"},
+    {"command": "groups", "description": "Choose a device group (owner only)"},
     {"command": "help", "description": "All commands and features"},
 ]
 
@@ -135,6 +144,17 @@ class TelegramBot(Notifier):
         self._base = f"{api_base}/bot{token}/"   # api_base is overridable for the fake server in tests
         self.owners = parse_chat_ids(chat_id)
         self.handlers = handlers
+        self._quick_picker = None
+        quick_hooks = (handlers.get("quick_choices"), handlers.get("quick_preview"),
+                       handlers.get("quick_apply"))
+        if all(callable(hook) for hook in quick_hooks):
+            from netpulse.notifications.picker import QuickPicker
+            self._quick_picker = QuickPicker(
+                *quick_hooks,
+                group_preview=handlers.get("quick_group_preview"),
+                group_apply=handlers.get("quick_group_apply"),
+                bandwidth=handlers.get("quick_bandwidth"),
+            )
         self.profile = profile
         self.store = store
         self._lock = threading.Lock()
@@ -320,7 +340,31 @@ class TelegramBot(Notifier):
         if not self._is_allowed(chat):
             self._handle_stranger(chat, chat_obj)
             return
-        cmd = parse_command(msg.get("text", "")) or "help"
+        text = msg.get("text", "")
+        sender = str((msg.get("from") or {}).get("id", ""))
+        private_owner = (chat_obj.get("type") == "private" and chat in self.owners and
+                         sender in self.owners and sender == chat)
+        if self._quick_picker and private_owner:
+            result = self._quick_picker.message(text, chat, sender)
+            if result is not None:
+                self.send(result[0], chat=chat, markup=result[1])
+                return
+        cmd = parse_command(text) or "help"
+        if self._quick_picker and private_owner and parse_command(text) is not None:
+            # Navigating away from a list, such as opening More or returning
+            # home, invalidates all previously displayed picker callbacks.
+            self._quick_picker.clear(chat, sender)
+        if cmd == "cancel" and self._quick_picker and private_owner:
+            self.send("Cancelled. Nothing changed.", chat=chat)
+            return
+        if cmd == "more":
+            self.send("More from NetPulse\nReports, tools and alert controls.",
+                      chat=chat, markup=MORE_KEYBOARD)
+            return
+        if cmd == "home":
+            self.send("🏠 NetPulse\nChoose Status, Devices, Groups, or Help / More below.",
+                      chat=chat, markup=KEYBOARD)
+            return
         if cmd in OWNER_ONLY:
             if chat not in self.owners:
                 self.send("Only the owner can do that.", chat=chat)
@@ -329,6 +373,11 @@ class TelegramBot(Notifier):
                 text, markup = self._owner_command(cmd)
                 self.send(text, chat=chat, markup=markup)
             else:
+                if cmd in {"devices", "groups"} and self._quick_picker and private_owner:
+                    picker_kind = "devices" if cmd == "devices" else "groups"
+                    reply, markup = self._quick_picker.begin(picker_kind, chat, sender)
+                    self.send(reply, chat=chat, markup=markup)
+                    return
                 handler = self.handlers.get(cmd)
                 if not handler:
                     self.send("That owner command is not available yet.", chat=chat)
@@ -406,6 +455,12 @@ class TelegramBot(Notifier):
         who = str((cb.get("from") or {}).get("id", ""))
         msg = cb.get("message") or {}
         self._call("answerCallbackQuery", {"callback_query_id": cb.get("id")})
+        if self._quick_picker:
+            picker_result = self._quick_picker.callback(cb)
+            if picker_result is not None:
+                origin_chat = str(((msg.get("chat") or {}).get("id", "")))
+                self.send(picker_result[0], chat=origin_chat, markup=picker_result[1])
+                return
         if who not in self.owners:
             return
         action, _, target = str(cb.get("data", "")).partition(":")

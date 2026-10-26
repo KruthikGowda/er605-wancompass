@@ -65,7 +65,7 @@ class RouterReadinessSummary(unittest.TestCase):
             db_path = str(Path(directory) / "netpulse.db")
             storage = sqlite.Storage(db_path)
             try:
-                sqlite.set_device_route(db_path, "AA-BB-CC-DD-EE-01", "192.0.2.10", "WAN1",
+                sqlite.set_device_route(db_path, "AA-BB-CC-DD-EE-01", "192.0.2.10", "WAN1_ONLY",
                                         100, "owner", "AUTO", "applied", "timed",
                                         expires_at=900, expires_monotonic=900.0, boot_id="boot")
                 sqlite.set_device_route(db_path, "AA-BB-CC-DD-EE-02", "192.0.2.11", "WAN2",
@@ -98,8 +98,10 @@ class RouterReadinessSummary(unittest.TestCase):
             "disabled": 1,
             "priority_enabled": 1,
             "only_enabled": 1,
+            "strict_only_enabled": 1,
             "unknown_mode_enabled": 1,
             "priority_target_unknown": 0,
+            "strict_target_unknown": 0,
             "unknown_state": 0,
             "saved_match": 2,
             "saved_drift": 1,
@@ -113,6 +115,16 @@ class RouterReadinessSummary(unittest.TestCase):
         ], {"AA-BB-CC-DD-EE-01": {"route": "WAN2"}})
         result = assess_native_fallback_prerequisites(True, summary)
         self.assertEqual(result, {"status": "prerequisites_pass", "blockers": []})
+
+    def test_strict_only_is_a_caution_and_never_a_priority_fallback_pass(self):
+        summary = summarize_netpulse_routes([
+            {"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN1", "mode": "Only"},
+        ], {"AA-BB-CC-DD-EE-01": {"route": "WAN1_ONLY"}})
+        self.assertEqual(summary["saved_match"], 1)
+        self.assertEqual(summary["strict_only_enabled"], 1)
+        result = assess_native_fallback_prerequisites(True, summary)
+        self.assertEqual(result["status"], "needs_review")
+        self.assertIn("strict Only-mode routes intentionally have no WAN fallback", result["blockers"][0])
 
     def test_pi_offline_prerequisites_fail_closed_for_unsafe_or_unknown_rows(self):
         cases = [

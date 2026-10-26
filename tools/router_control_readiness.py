@@ -43,8 +43,8 @@ def summarize_netpulse_routes(rows, saved_routes: dict[str, dict]) -> dict | Non
         return None
     owned_rows = []
     router_macs = set()
-    enabled = disabled = priority_enabled = only_enabled = unknown_mode_enabled = 0
-    priority_target_unknown = unknown_state = 0
+    enabled = disabled = priority_enabled = only_enabled = strict_only_enabled = unknown_mode_enabled = 0
+    priority_target_unknown = strict_target_unknown = unknown_state = 0
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -64,6 +64,9 @@ def summarize_netpulse_routes(rows, saved_routes: dict[str, dict]) -> dict | Non
                     priority_target_unknown += 1
             elif mode == "only":
                 only_enabled += 1
+                strict_only_enabled += 1
+                if str(row.get("interfaces", "")).upper() not in ("WAN1", "WAN2"):
+                    strict_target_unknown += 1
             else:
                 unknown_mode_enabled += 1
         elif state in ("off", "0", "false", "disabled"):
@@ -89,8 +92,10 @@ def summarize_netpulse_routes(rows, saved_routes: dict[str, dict]) -> dict | Non
     return {
         "rules": len(owned_rows), "enabled": enabled, "disabled": disabled,
         "priority_enabled": priority_enabled, "only_enabled": only_enabled,
+        "strict_only_enabled": strict_only_enabled,
         "unknown_mode_enabled": unknown_mode_enabled,
         "priority_target_unknown": priority_target_unknown,
+        "strict_target_unknown": strict_target_unknown,
         "unknown_state": unknown_state,
         "saved_match": matched, "saved_drift": drift, "saved_unknown": unknown,
         "untracked_rules": len(router_macs - saved_macs),
@@ -106,7 +111,9 @@ def assess_native_fallback_prerequisites(balance_enabled: bool,
     if balance_enabled is not True:
         blockers.append("load balancing is not confirmed enabled")
     if route_summary["only_enabled"]:
-        blockers.append("enabled Only-mode policy rows ignore WAN online detection")
+        blockers.append("strict Only-mode routes intentionally have no WAN fallback and are excluded from failover checks")
+    if route_summary.get("strict_target_unknown", 0):
+        blockers.append("strict Only rows have an unknown WAN target")
     if route_summary["unknown_mode_enabled"]:
         blockers.append("enabled policy rows have an unknown mode")
     if route_summary["priority_target_unknown"]:
@@ -176,7 +183,8 @@ def main() -> None:
         raise SystemExit("Run with sudo: sudo python3 tools/router_control_readiness.py")
     cfg = load(CONFIG)
     route_state = sqlite.device_routes(cfg.db_path)
-    pinned = [r for r in route_state.values() if r.get("route") in ("WAN1", "WAN2")]
+    pinned = [r for r in route_state.values()
+              if r.get("route") in ("WAN1", "WAN2", "WAN1_ONLY", "WAN2_ONLY")]
     timed = [r for r in pinned if r.get("expires_at") is not None]
     overdue = overdue_route_expiry_count(
         cfg.db_path, int(time.time()), time.monotonic(), _system_boot_id())
@@ -224,7 +232,7 @@ def main() -> None:
               f"{route_summary['rules']} total, {route_summary['enabled']} enabled, "
               f"{route_summary['disabled']} disabled; WAN-down behavior: "
               f"{route_summary['priority_enabled']} Priority (router online detection), "
-              f"{route_summary['only_enabled']} Only (ignores online detection), "
+              f"{route_summary['strict_only_enabled']} strict Only (no fallback), "
               f"{route_summary['unknown_mode_enabled']} unknown; saved preference: "
               f"{route_summary['saved_match']} match, {route_summary['saved_drift']} differ, "
               f"{route_summary['saved_unknown']} unknown; "
@@ -239,7 +247,9 @@ def main() -> None:
     else:
         print("Pi-offline NetPulse rule prerequisites: needs review; " + "; ".join(fallback["blockers"]) + ".")
     if route_summary is not None:
-        if route_summary["only_enabled"] or route_summary["unknown_mode_enabled"]:
+        if route_summary["strict_only_enabled"]:
+            print("Strict Only routes are intentional no-fallback exclusions; they do not count as a WAN failover pass.")
+        if route_summary["unknown_mode_enabled"]:
             print("Review enabled NetPulse route modes before relying on router-native WAN fallback.")
     rows = [r for r in reservations if isinstance(r, dict)] if isinstance(reservations, list) else []
     eligible = [r for r in rows if str(r.get("enable", "1")).lower() not in ("0", "false", "off")]

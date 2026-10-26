@@ -28,7 +28,8 @@ GROUP_NAME = "NP_G_AABBCCDDEE01"
 class ObservedNetpulseRoute(unittest.TestCase):
     def test_observes_enabled_disabled_missing_and_ambiguous_rows(self):
         mac = "AA-BB-CC-DD-EE-01"
-        raw = {"policy_routes": [{"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN2"}],
+        raw = {"policy_routes": [{"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN2",
+                                  "mode": "Priority"}],
                "policy_routes_checked_at": 123}
         self.assertEqual(observed_netpulse_route(raw, mac), {"route": "WAN2", "checked_at": 123})
         self.assertEqual(observed_netpulse_route(raw, mac.replace("-", ":").lower()),
@@ -38,8 +39,8 @@ class ObservedNetpulseRoute(unittest.TestCase):
         raw["policy_routes"] = []
         self.assertEqual(observed_netpulse_route(raw, mac)["route"], "AUTO")
         raw["policy_routes"] = [
-            {"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN1"},
-            {"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN2"}]
+            {"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN1", "mode": "Priority"},
+            {"name": "NP_R_AABBCCDDEE01", "state": "on", "interfaces": "WAN2", "mode": "Priority"}]
         self.assertIsNone(observed_netpulse_route(raw, mac)["route"])
         self.assertIsNone(observed_netpulse_route({}, mac)["route"])
 

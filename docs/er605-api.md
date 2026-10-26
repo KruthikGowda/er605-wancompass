@@ -34,9 +34,81 @@ The current runtime reads these forms when available:
 | `dhcps/lan` | DHCP pool/scope settings |
 | `balance/balance_global`, `balance/balance_basic` | Load balancing readiness |
 | `policy_route/policy_route` | Saved per-device route read-back and drift detection |
+| `ipstats/setting`, `ipstats/list` | On-demand per-IP traffic samples when the ER605 statistics setting is explicitly enabled |
 | `access_ctl/acl_inner` | ACL rows for pilot and pause safety checks |
 
+The device bandwidth view reads per-IP `rx_bytes` and `tx_bytes` counters twice,
+normally two seconds apart, and computes router RX/TX rates from the differences.
+It validates the `addr` as IPv4, bounds the table at 8,192 rows, and does not rely
+on an unverified scale for the router's `rx_bps` or `tx_bps` fields. It binds a
+selected MAC to an IP only when the fresh DHCP client list has unique MAC and IP
+bindings before and after the sample. Results are cached in memory for up to 15
+seconds; cache use still checks that selected device identity. Invalid, reset,
+ambiguous, disabled, or stale data is unavailable, not zero. RX/TX are router-side
+directions; client upload/download semantics and per-WAN attribution are not
+established. This is read-only telemetry and does not configure QoS.
+
 `tools/router_firewall_discover.py` probes a bounded list of candidate forms using reads only and redacts device identities and unrecognized values. The principal ACL read is `access_ctl/acl_inner`. Discovery is useful for compatibility diagnosis; a readable form does not establish that a write form is supported or correctly enforced.
+
+## QoS form schema observed in the ER605 UI
+
+Read-only inspection of the reviewed firmware's bundled UI source identifies these
+forms: `/admin/qos?form=global` for global settings, `/admin/qos?form=rule` for
+rate rules, and `/admin/qos_ctl?form=class` for classification rules. The UI also
+loads `/admin/qos_ctl?form=dscp` and service, IPv4 group, IPv6 group, DHCP LAN,
+and interface status catalogs. These are UI endpoints and fields, not a verified
+router write contract; response envelopes, exact row payloads, and enforcement
+have not yet been validated by NetPulse.
+
+The global form exposes `qos_enable`, `threshold_enable`, and `qos_threshold`.
+The UI accepts a threshold from 0 to 100, with a maximum input length of three
+digits. Turning global QoS off disables threshold input, forces its checkbox off,
+and sets its value to 0. This source does not establish whether a disabled global
+setting preserves, ignores, or otherwise affects saved rules. NetPulse must not
+enable or change this global setting as part of a per-device action.
+
+The rate-rule editor exposes `name`, hidden `if_ping` (shown as LAN), `if_pong`
+(WAN or eligible VPN interface; the UI can offer `WAN_ALL`), `source_type`
+(`network` or `ip_group`), `network`, `ip_group`, `rate_max`, `rate_max_mate`,
+`mode` (`share` or `priv`), `time`, `comment`, `position`, `enable`, and hidden
+`ip_type` (default `src`). `rate_max` is bounded by 100 Kbps and the selected
+interface's advertised `tx_max_speed` converted to Kbps; `rate_max_mate` is
+bounded by 100 Kbps and `rx_max_speed` converted to Kbps. The UI labels both
+values in Kbps. It offers `Any` as the default time object, limits comments to
+50 characters, and validates an optional one-based position against the current
+rule count. The source does not define the precise operational distinction
+between `share` and `priv`; NetPulse must not infer it from the field names.
+
+The separate classification form exposes `class` (`class1`, `class2`, or
+`class3`), `status` (`enable` or `disable`), `ip` (`ipv4` or `ipv6`), `src_ip`,
+`dst_ip`, `dscp`, `service`, `rule`, `ipt_order`, and `id`. It maps address
+choices to IPv4/IPv6 group catalogs and loads service and DSCP catalogs. This
+classifies traffic and assigns a QoS class/DSCP value; it is distinct from the
+rate-rule editor's per-interface rate fields. Neither UI schema alone proves
+packet treatment, scheduler behavior, or that the class order corresponds to a
+specific bandwidth guarantee.
+
+### Safe implementation path
+
+First add bounded read-only reads and canonicalizers for the global settings,
+rate-rule rows, and class rows; preserve unknown fields and ambiguous envelopes
+as unavailable. Use the authenticated `ER605Client.session()` and
+`get_response()` pattern, serialized under the router's existing `api_lock`.
+Validate the exact response shape on the reviewed firmware before adding writes.
+
+If a later owner-approved feature adds a per-device rate rule, keep the global
+QoS settings read-only and leave their current values unchanged. Require global
+QoS to already be enabled, a fresh unique device/IP-group mapping, an explicit
+WAN/interface, and a preview of the selected interface plus both Kbps values and
+mode. Implement only the exact observed add/delete protocol after separately
+verifying its request envelope and read-back behavior. Before writing, re-read
+the full rule collection; after writing, require exact row read-back. Roll back
+only the exact newly-created row if its identity and full payload still match;
+on ambiguous state, retain a recovery lock and require operator review. Never
+remove or rewrite pre-existing QoS rules as cleanup. Until these protocol,
+global-setting, and controlled endpoint checks pass, per-device QoS remains
+unavailable. The existing `ER605Client.set_row()` allowlist does not include
+QoS forms and is not a basis for adding them without those checks.
 
 ## Allowlisted configuration writes
 
@@ -56,7 +128,9 @@ NetPulse object names use the `NP_` prefix. Device address, group, and route obj
 
 For a single-WAN device preference, NetPulse creates or updates a per-device policy route with `mode = "Priority"`, selected `interfaces` (`WAN1` or `WAN2`), the device's source IP group, and an any-destination group. The ER605's own WAN detection then allows the route to stop applying if its selected WAN is reported offline. This is router-native behavior and can continue when the NetPulse host is unavailable, subject to firmware and router configuration.
 
-The `Only` mode pins a route exclusively and does not provide the same router-native priority fallback semantics. NetPulse readiness checks require enabled NetPulse route rows to use a recognized WAN and `Priority` mode. Do not change these controls to `Only` or hand-edit owned policy objects. Router configuration read-back alone does not prove client traffic failover; test actual traffic during an owner-approved outage exercise.
+`Only` mode is available as a separate, explicit strict action when both `router.controls_enabled` and `router.strict_wan_controls_enabled` are true. The strict control path is limited in code to ER605 firmware `2.3.3 Build 20251029 Rel.18054`; the strict flag defaults to false. It writes `mode = "Only"`, requires exact interface/mode read-back, and stores the distinct route intent `WAN1_ONLY` or `WAN2_ONLY`. An unknown or missing enabled-row mode is treated as unreadable, never as Priority.
+
+Only has no IPv4 WAN fallback through the ER605: if the selected WAN is down, that device has no IPv4 Internet through this router. IPv6, mobile data, VPNs, and other network paths are not controlled. Other devices' Priority route rows remain unchanged. The route stays on the ER605 while NetPulse is offline; a timed Only route can be removed only when the NetPulse service runs the expiry cleanup. The dashboard and Telegram preview explain this before confirmation. Strict Only rows are listed as intentional no-fallback exclusions by the readiness tool and do not count as WAN failover evidence. Router configuration read-back alone does not prove client traffic behavior; use a disposable endpoint and an owner-approved WAN disconnect drill to confirm it.
 
 ## Firmware review and persisted locks
 

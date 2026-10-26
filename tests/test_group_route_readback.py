@@ -13,7 +13,8 @@ class GroupRouteReadback(unittest.TestCase):
                 "policy_routes_checked_at": self.NOW if checked_at is None else checked_at}
 
     def row(self, mac, route, state="on"):
-        return {"name": f"NP_R_{mac.replace('-', '')}", "interfaces": route, "state": state}
+        return {"name": f"NP_R_{mac.replace('-', '')}", "interfaces": route,
+                "state": state, "mode": "Priority"}
 
     def test_all_member_rules_match_saved_preferences(self):
         result = summarize_group_routes(

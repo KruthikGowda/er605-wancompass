@@ -120,6 +120,28 @@
   .devices-toolbar input, .devices-toolbar select { min-height: 44px; border: 1px solid var(--line); border-radius: 10px;
     background: var(--card); color: var(--ink); font: inherit; padding: 7px 10px; }
   .devices-toolbar input { flex: 1 1 220px; min-width: 0; }
+  .quick-actions { display: grid; gap: 10px; margin: 12px 0; border: 1px solid var(--line); border-radius: 14px; padding: 14px; background: var(--card); }
+  .quick-actions-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+  .quick-actions-title { margin: 0; font: 700 16px/1.2 var(--display); }
+  .quick-actions-controls { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto auto; align-items: end; gap: 8px; }
+  .quick-actions-controls label { display: grid; gap: 3px; color: var(--soft); font-size: 12px; }
+  .quick-actions-controls select { width: 100%; min-height: 44px; font-size: 16px; }
+  .quick-actions-controls button { min-height: 44px; }
+  #quick-action-review { border-color: var(--brand); color: #fff; background: var(--brand); font-weight: 700; }
+  .quick-action-select { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; color: var(--brand); font-size: 13px; font-weight: 650; }
+  .quick-action-manage, .quick-action-group { min-height: 44px; border-color: var(--brand); color: var(--brand); font-weight: 700; }
+  .quick-action-note { margin: 0; color: var(--soft); font-size: 12px; }
+  .quick-action-note:empty { display: none; }
+  .quick-action-note.error { color: var(--bad); }
+  .quick-action-members { max-height: min(42vh, 360px); overflow: auto; }
+  .quick-action-members .device-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .device-traffic-panel { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .device-traffic-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+  .device-traffic-title { margin: 0; font-size: 14px; }
+  .device-traffic-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .device-traffic-values { display: grid; gap: 2px; text-align: right; font-variant-numeric: tabular-nums; }
+  .device-traffic-state { color: var(--soft); font-size: 12px; }
+  .device-traffic-head button { min-height: 44px; }
   .group-create-toolbar { display: grid; grid-template-columns: minmax(200px, 1fr) auto auto auto; align-items: center; }
   #group-save, #group-new { min-height: 44px; border-radius: 9px; padding: 8px 13px; font-weight: 650; cursor: pointer; }
   #group-save { border: 1px solid var(--brand); background: var(--brand); color: #fff; }
@@ -131,7 +153,10 @@
   .device-row:last-child { border-bottom: 1px solid var(--line); }
   .device-name { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
   .device-identity { min-width: 0; }
-  .device-details { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 5px; }
+  .device-disambiguation { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 5px; }
+  .device-full-details { margin-top: 5px; }
+  .device-full-details summary { min-height: 44px; }
+  .device-full-details-content { display: grid; gap: 4px; padding: 2px 0 4px 18px; }
   .device-status { display: inline-flex; align-items: center; width: fit-content; margin-top: 7px; padding: 2px 8px;
     border-radius: 999px; background: color-mix(in srgb, var(--good) 14%, transparent); color: var(--good);
     font-size: 12px; font-weight: 650; }
@@ -241,6 +266,9 @@
     .big b { font-size: 38px; }
     .device-row { grid-template-columns: 1fr; gap: 8px; padding: 12px; }
     .device-route-control { grid-template-columns: 1fr; }
+    .quick-actions-controls { grid-template-columns: 1fr; }
+    .quick-actions-controls > * { width: 100%; }
+    .quick-action-members .device-row { grid-template-columns: 1fr; }
     .group-create-toolbar { grid-template-columns: minmax(0, 1fr); }
     .group-create-toolbar > * { width: 100%; }
     input, select, .device-route-control button { min-height: 44px; }
@@ -291,7 +319,7 @@
       <p class="device-guidance" id="devices-guidance">Search by device name, IP, or MAC. A DHCP listing is not proof that a device is online. Internet pause controls stay disabled until their safety checks are complete.</p>
       <p class="device-guidance note warn" id="syslog-critical" role="status" hidden></p>
       <details class="device-explainer"><summary>Device checks, activity notices, and pause safety</summary>
-        <p class="device-guidance">Optional LAN ping checks can show when a device replies. A device may sleep or block ping, so silence does not prove it is offline. Internet pause/resume is not available until ACL enforcement is verified; ER605 ACL rules do not affect clients on the same LAN, so controls remain disabled pending WAN2 and recovery validation. WANCompass protects its own Pi connection.</p>
+        <p class="device-guidance">Optional LAN ping checks can show when a device replies. A device may sleep or block ping, so silence does not prove it is offline. Internet pause/resume is not available until router enforcement and recovery validation are complete; ER605 ACL rules do not affect clients on the same LAN. WANCompass protects its own Pi connection.</p>
         <p class="device-guidance" id="device-scan-guidance"></p>
         <p class="device-guidance" id="syslog-status" hidden></p>
         <span class="soft" id="presence-toggle-help">Optional read-only checks; silence does not prove a device is offline.</span>
@@ -304,14 +332,33 @@
         <select id="device-filter" aria-label="Filter home devices"><option value="all">All devices</option><option value="listed">In ER605 DHCP list</option><option value="reserved">Reserved devices</option><option value="needs-reservation">Needs reservation</option></select>
         <span class="soft" id="device-count" aria-live="polite"></span>
       </div>
+      <section class="quick-actions" aria-labelledby="quick-actions-title">
+        <div class="quick-actions-head"><h3 class="quick-actions-title" id="quick-actions-title">Manage connections</h3><span id="quick-action-count" class="soft" aria-live="polite">No devices selected</span></div>
+        <p class="quick-action-note" id="quick-action-status" role="status" aria-live="polite">Loading available actions…</p>
+        <div class="quick-actions-controls">
+          <label>Action<select id="quick-action-choice" aria-label="Action for selected devices" disabled></select></label>
+          <label id="quick-action-duration-label">Duration<select id="quick-action-duration" aria-label="Action duration" disabled><option value="0">Until resumed</option><option value="3600" selected>1 hour</option><option value="900">15 minutes</option><option value="21600">6 hours</option></select></label>
+          <button type="button" id="quick-action-clear" disabled>Clear selection</button>
+          <button type="button" id="quick-action-review" disabled>Review action</button>
+        </div>
+        <p id="quick-action-capability" class="quick-action-note"></p>
+        <section class="device-traffic-panel" aria-labelledby="device-traffic-title">
+          <div class="device-traffic-head"><h4 class="device-traffic-title" id="device-traffic-title">Read-only device traffic</h4>
+            <button type="button" id="device-traffic-load" disabled>View traffic</button></div>
+          <p id="device-traffic-status" class="quick-action-note" role="status" aria-live="polite">Choose a device or group to request a sample.</p>
+          <p id="device-traffic-method" class="quick-action-note">ER605 RX/TX byte-counter deltas · measured over a short interval</p>
+          <div id="device-traffic-results" class="device-list" aria-label="Measured device traffic"></div>
+        </section>
+      </section>
       <section class="card" aria-labelledby="groups-title" style="margin:12px 0">
         <h3 id="groups-title" style="margin:0 0 6px">Device groups</h3>
-        <p class="device-route-help">Give the group a name, select its devices below, then save the draft. Membership changes never change routes; they stop Smart WAN for that group until it is enabled again.</p>
+        <p class="device-route-help">Quick actions can prepare missing DHCP reservations during review. Advanced group routing needs every member reserved and available.</p>
         <div class="devices-toolbar group-create-toolbar"><input id="group-name" maxlength="40" placeholder="Group name, e.g. Work devices" aria-label="Device group name">
           <button id="group-save" type="button">Create device group</button><button id="group-new" type="button">Start new group</button><span id="group-selection-count" class="soft" aria-live="polite">0 selected</span></div>
         <div class="group-editor" id="group-editor" hidden>
           <div class="group-editor-head"><span class="group-editor-title" id="group-editor-title"></span><span class="soft" id="group-editor-count"></span></div>
-          <p class="group-selection-empty" id="group-selection-empty">Select devices below to add them to this group.</p>
+          <p class="group-selection-empty" id="group-selection-empty">Type a group name or choose Start new group to select devices.</p>
+          <button type="button" id="group-cancel-draft">Clear group draft</button>
         </div>
         <div id="group-selection-members" class="device-list" aria-label="Selected group members" hidden></div>
         <div id="device-groups" class="device-list"></div>
@@ -335,6 +382,14 @@
     <p class="device-route-help">Preference duration: <b id="route-dialog-expiry"></b></p>
     <p class="device-route-help">Only this reserved device is affected. You can switch it back to Auto later.</p>
     <div class="dialog-actions"><button type="button" id="route-cancel">Cancel</button><button type="button" class="primary" id="route-apply">Apply change</button></div>
+  </dialog>
+  <dialog id="quick-action-dialog" aria-labelledby="quick-action-dialog-title">
+    <h3 id="quick-action-dialog-title">Review action</h3>
+    <p><b id="quick-action-dialog-summary"></b></p>
+    <div id="quick-action-dialog-members" class="device-list quick-action-members"></div>
+    <p id="quick-action-dialog-reservations" class="device-route-help"></p>
+    <p id="quick-action-dialog-effect" class="device-route-help"></p>
+    <div class="dialog-actions"><button type="button" id="quick-action-cancel">Cancel</button><button type="button" class="primary" id="quick-action-apply">Confirm</button></div>
   </dialog>
   <dialog id="pause-dialog" aria-labelledby="pause-dialog-title">
     <h3 id="pause-dialog-title">Review Internet pause</h3>
@@ -449,6 +504,18 @@ let order = [], labels = {}, hours = 24, metric = "rtt_ms", server = "", servers
 let renameMac = "";
 const colorOf = wan => css(order.indexOf(wan) === 1 ? "--wan2" : "--wan1");
 const labelOf = wan => labels[wan] || wan;
+function routeLabel(route) {
+  if (route === "AUTO") return "Auto balance";
+  if (route === "WAN1" || route === "WAN2") return `Prefer ${labelOf(route)}`;
+  if (route === "WAN1_ONLY" || route === "WAN2_ONLY") return `Only ${labelOf(route === "WAN1_ONLY" ? "WAN1" : "WAN2")} · no fallback`;
+  if (route === "MIXED") return "Mixed routes";
+  return route == null || route === "" ? "Unavailable" : String(route);
+}
+function strictWanAvailable(route) {
+  const id = route === "WAN1_ONLY" ? "only_wan1" : route === "WAN2_ONLY" ? "only_wan2" : "";
+  return !!id && typeof actionCatalog !== "undefined" &&
+    !!(actionCatalog?.actions || []).find(item => item.id === id)?.enabled;
+}
 
 function duration(sec) {
   sec = Math.max(0, Math.round(sec));
@@ -470,6 +537,9 @@ async function getJSON(url) { const r = await fetch(url, {cache: "no-store"}); i
 let deviceData = null;
 let pauseData = {state:{enabled:false,reason:"Awaiting Internet pause validation"},records:[]};
 const selectedDeviceMacs = new Set();
+const quickActionMacs = new Set();
+let actionCatalog = null, actionCatalogError = "", actionTargetGroupId = null;
+let groupDraftActive = false;
 let editingGroupId = null;
 
 function renderSyslogStatus(syslog) {
@@ -498,12 +568,20 @@ async function refreshDevices() {
     try { pauseData = await getJSON("/api/devices/paused"); }
     catch (_) { pauseData = {state:{enabled:false,reason:"Pause status is unavailable."},records:[]}; }
     deviceData = d;
+    try {
+      actionCatalog = await getJSON("/api/actions");
+      actionCatalogError = "";
+    } catch (err) {
+      actionCatalog = null;
+      actionCatalogError = "Could not load available actions. Refresh the dashboard and try again.";
+    }
     const count = Array.isArray(d.devices) ? d.devices.length : 0;
     const groupCount = Array.isArray(d.groups) ? d.groups.length : 0;
     $("dashboard-summary").textContent = `${count} home device${count === 1 ? "" : "s"} · ${groupCount} group${groupCount === 1 ? "" : "s"}`;
     $("devices-wrap").hidden = !d.configured;
     if (!d.configured) return;
     renderSyslogStatus(d.syslog);
+    renderQuickActions();
     if (!d.ready) { $("devices-note").textContent = "Waiting for the first router check…"; return; }
     renderDevices();
   } catch (e) { /* router inventory is optional */ }
@@ -559,14 +637,226 @@ function deviceNotice(message, error = false) {
   notice.hidden = !message;
 }
 
+const QUICK_ACTIONS = [
+  ["auto", "Auto balance"], ["prefer_wan1", "Prefer WAN 1"], ["prefer_wan2", "Prefer WAN 2"],
+  ["pause", "Pause Internet"], ["resume", "Resume Internet"], ["only_wan1", "Only WAN 1 · no fallback"],
+  ["only_wan2", "Only WAN 2 · no fallback"]
+];
+let deviceTrafficScope = "", deviceTrafficRequestId = 0, deviceTrafficLoading = false;
+function currentDeviceTrafficTarget() {
+  if (actionTargetGroupId !== null) return {group_id: Number(actionTargetGroupId)};
+  const macs = [...quickActionMacs];
+  return macs.length ? {macs} : null;
+}
+function deviceTrafficTargetKey(target) {
+  if (!target) return "none";
+  if (target.group_id !== undefined) {
+    const group = (deviceData?.groups || []).find(item => Number(item.id) === Number(target.group_id));
+    const members = Array.isArray(group?.members) ? [...group.members].sort().join(",") : "missing";
+    return `group:${target.group_id}:${members}`;
+  }
+  return `macs:${[...target.macs].sort().join(",")}`;
+}
+function trafficRate(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "Unavailable";
+  if (value === 0) return "0 Mbps";
+  return value < 0.001 ? "<0.001 Mbps" : `${value.toFixed(3)} Mbps`;
+}
+function trafficSeconds(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unavailable";
+  return value < 10 ? `${value.toFixed(1)} s` : value < 60 ? `${Math.round(value)} s` : duration(value);
+}
+function clearDeviceTraffic(message, error = false) {
+  $("device-traffic-results").replaceChildren();
+  $("device-traffic-status").textContent = message;
+  $("device-traffic-status").classList.toggle("error", error);
+}
+function syncDeviceTraffic(canLoad, blockedReason = "") {
+  const target = currentDeviceTrafficTarget();
+  const key = deviceTrafficTargetKey(target);
+  const scope = canLoad ? `ready:${key}` : target ? `blocked:${key}` : "none";
+  if (scope !== deviceTrafficScope) {
+    deviceTrafficScope = scope;
+    deviceTrafficRequestId++;
+    deviceTrafficLoading = false;
+    clearDeviceTraffic(!target ? "Choose a device or group to request a sample." :
+      canLoad ? "Choose View traffic to request a fresh sample." :
+      blockedReason || "Refresh the device list before requesting traffic.", !canLoad && !!target);
+  }
+  $("device-traffic-load").disabled = !canLoad || deviceTrafficLoading;
+  $("device-traffic-load").textContent = deviceTrafficLoading ? "Measuring…" : "View traffic";
+}
+function renderDeviceTraffic(report) {
+  const rows = Array.isArray(report?.devices) ? report.devices : [];
+  const sampleAge = trafficSeconds(report?.age_seconds);
+  if (report?.enabled === false) {
+    clearDeviceTraffic("ER605 per-IP statistics are disabled. No traffic sample is available.");
+  } else if (report?.available && rows.length) {
+    const sampleLength = trafficSeconds(report.sample_seconds);
+    const ageLabel = sampleAge === "unavailable" ? "age unavailable" : `${sampleAge} old`;
+    $("device-traffic-status").textContent = `Measured over ${sampleLength} · sample ${ageLabel}.`;
+    $("device-traffic-status").classList.toggle("error", false);
+  } else {
+    const hasStaleValues = rows.some(row => row?.stale === true);
+    const staleAge = report?.age_seconds == null ? "" : ` Last sample ${sampleAge === "unavailable" ? "age unavailable" : `${sampleAge} old`}.`;
+    clearDeviceTraffic(`${hasStaleValues ? "Traffic sample is stale." : "No current traffic sample is available."}${staleAge} ${report?.reason || ""}`.trim());
+  }
+
+  const container = $("device-traffic-results");
+  container.replaceChildren();
+  const names = new Map((deviceData?.devices || []).map(device => [device.mac, device]));
+  for (const item of rows) {
+    const device = names.get(item?.mac);
+    const row = document.createElement("article");
+    row.className = "device-row device-traffic-row";
+    const identity = document.createElement("div");
+    const name = document.createElement("b");
+    name.textContent = device?.name || device?.label || "Home device";
+    const meta = document.createElement("div");
+    meta.className = "device-meta";
+    meta.textContent = item?.ip || "No current IP";
+    identity.append(name, meta);
+    const values = document.createElement("div");
+    values.className = "device-traffic-values";
+    const stale = item?.stale === true;
+    const available = item?.available === true && !stale;
+    const rx = document.createElement("span");
+    const tx = document.createElement("span");
+    rx.textContent = `${stale ? "Last " : ""}RX ${trafficRate(item?.rx_mbps)}`;
+    tx.textContent = `${stale ? "Last " : ""}TX ${trafficRate(item?.tx_mbps)}`;
+    values.append(rx, tx);
+    const state = document.createElement("span");
+    state.className = "device-traffic-state";
+    state.textContent = available ? "Current sample" : stale ? `Stale · ${item?.reason || "refresh unavailable"}` :
+      item?.reason || "Unavailable";
+    row.append(identity, values, state);
+    container.append(row);
+  }
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "device-route-help";
+    empty.textContent = report?.reason || "No device traffic rows were returned.";
+    container.append(empty);
+  }
+}
+function quickActionInfo(id) { return (actionCatalog?.actions || []).find(item => item.id === id) || null; }
+function renderQuickActions() {
+  const select = $("quick-action-choice");
+  const durationLabel = $("quick-action-duration-label");
+  const choice = select.value;
+  const activeMacs = [...quickActionMacs];
+  const inventory = deviceData?.devices || [];
+  const missing = activeMacs.filter(mac => !inventory.some(item => item.mac === mac));
+  const protectedTargets = activeMacs.filter(mac => inventory.some(item => item.mac === mac && item.protected));
+  const missingGroup = actionTargetGroupId !== null && !(deviceData?.groups || []).some(group => Number(group.id) === Number(actionTargetGroupId));
+  const unavailableOnlyModes = QUICK_ACTIONS.slice(5).filter(([id]) => !quickActionInfo(id)?.enabled);
+  const actionItems = QUICK_ACTIONS.filter(([id]) => !id.startsWith("only_") || quickActionInfo(id)?.enabled);
+  select.innerHTML = actionItems.map(([id, fallback]) => {
+    const item = quickActionInfo(id);
+    const label = item?.label || fallback;
+    const unavailable = !item?.enabled;
+    return `<option value="${esc(id)}" ${unavailable ? "disabled" : ""}>${esc(label)}${unavailable && item?.reason ? ` · unavailable: ${esc(item.reason)}` : ""}</option>`;
+  }).join("");
+  const desired = actionItems.some(([id]) => id === choice && quickActionInfo(id)?.enabled) ? choice :
+    (actionItems.find(([id]) => quickActionInfo(id)?.enabled)?.[0] || "");
+  select.value = desired;
+  select.disabled = !actionCatalog || !desired;
+  durationLabel.hidden = desired !== "pause";
+  $("quick-action-duration").disabled = !actionCatalog || desired !== "pause";
+  const count = actionTargetGroupId !== null ?
+    `Group${missingGroup ? " · no longer available" : ` · ${(deviceData?.groups || []).find(g => Number(g.id) === Number(actionTargetGroupId))?.members?.length || 0} devices`}` :
+    `${activeMacs.length} device${activeMacs.length === 1 ? "" : "s"} selected`;
+  const selectedAction = quickActionInfo(desired);
+  $("quick-action-count").textContent = (actionTargetGroupId === null && !activeMacs.length) ? "No devices selected" : count;
+  const message = actionCatalogError ||
+    (missingGroup ? "This group is no longer available. Choose a group again." :
+    missing.length ? `${missing.length} selected device${missing.length === 1 ? " is" : "s are"} no longer in the current inventory. Clear and select again.` :
+    protectedTargets.length ? "The monitoring device is protected and cannot be selected." : "");
+  const control = actionCatalog?.control || actionCatalog;
+  $("quick-action-status").textContent = message || (control?.enabled === false && !selectedAction?.enabled ?
+    `Router actions are locked${control.reason ? `: ${control.reason}` : "."}` : "Review shows the affected devices and any DHCP reservations before applying.");
+  $("quick-action-status").classList.toggle("error", !!message);
+  $("quick-action-capability").textContent = unavailableOnlyModes.length ?
+    `${unavailableOnlyModes.map(([id, fallback]) => `${quickActionInfo(id)?.label || fallback} unavailable${quickActionInfo(id)?.reason ? `: ${quickActionInfo(id).reason}` : ""}`).join(" · ")}. Prefer WAN keeps the router’s configured failover behavior.` : "";
+  const hasTarget = actionTargetGroupId !== null ? !missingGroup : activeMacs.length > 0;
+  const stale = missing.length > 0 || protectedTargets.length > 0;
+  $("quick-action-clear").disabled = !hasTarget && !activeMacs.length;
+  $("quick-action-review").disabled = !actionCatalog || !selectedAction?.enabled || !hasTarget || stale;
+  syncDeviceTraffic(hasTarget && !stale, missingGroup ? "This group is no longer available." :
+    stale ? "A selected device is stale or protected. Refresh the device list before requesting traffic." : "");
+}
+
+function quickActionDialog(preview) {
+  const info = quickActionInfo(preview.action || $("quick-action-choice").value);
+  $("quick-action-dialog-title").textContent = "Review action";
+  const targetLabel = preview.group || preview.target || "Selected devices";
+  const actionLabel = info?.label || preview.action || "Action";
+  $("quick-action-dialog-summary").textContent = [targetLabel, actionLabel].join(" · ");
+  const members = Array.isArray(preview.members) ? preview.members : [];
+  $("quick-action-dialog-members").innerHTML = members.map(member =>
+    `<div class="device-row"><div><b>${esc(member.name || member.label || member.device || member.mac || "Home device")}</b><div class="device-meta">${esc(member.ip || "No current IP")} · ${esc(member.mac || "")}</div></div><span>${esc(routeLabel(member.current || member.route || ""))}</span></div>`).join("") ||
+    `<p class="device-route-help">${Number(preview.count || 0)} device${Number(preview.count || 0) === 1 ? "" : "s"} will be checked by the router.</p>`;
+  const reservationCount = Number(preview.reservation_count ?? preview.reservations_count ?? preview.reservations?.length ?? 0);
+  $("quick-action-dialog-reservations").textContent = reservationCount ?
+    `${reservationCount} automatic DHCP reservation${reservationCount === 1 ? "" : "s"} will be created and verified.` : "No new DHCP reservations are needed.";
+  $("quick-action-dialog-effect").textContent = preview.effect || "The router will check each target and report the result.";
+  return new Promise(resolve => {
+    const dialog = $("quick-action-dialog");
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "apply"), {once:true});
+    dialog.returnValue = "cancel";
+    dialog.showModal();
+  });
+}
+
+$("quick-action-choice").addEventListener("change", renderQuickActions);
+$("quick-action-duration").addEventListener("change", renderQuickActions);
+$("quick-action-clear").addEventListener("click", () => {
+  quickActionMacs.clear(); actionTargetGroupId = null; renderDevices();
+});
+$("quick-action-cancel").onclick = () => $("quick-action-dialog").close("cancel");
+$("quick-action-apply").onclick = () => $("quick-action-dialog").close("apply");
+$("quick-action-review").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  const action = $("quick-action-choice").value;
+  const durationSeconds = action === "pause" ? Number($("quick-action-duration").value || 3600) : 0;
+  const reviewedGroupId = actionTargetGroupId;
+  const reviewedMacs = [...quickActionMacs];
+  const target = reviewedGroupId !== null ? {group_id: reviewedGroupId} : {macs: reviewedMacs};
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/actions/preview", {method:"POST", credentials:"same-origin",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify({...target, action, duration_seconds:durationSeconds})});
+    const preview = await response.json();
+    if (!response.ok) throw new Error(preview.error || response.status);
+    if (!(await quickActionDialog(preview))) return;
+    if (reviewedGroupId !== null && !(deviceData?.groups || []).some(group => Number(group.id) === Number(reviewedGroupId)))
+      throw new Error("The selected group changed while the review was open. Refresh and review again.");
+    if (reviewedGroupId === null && reviewedMacs.some(mac =>
+      !(deviceData?.devices || []).some(item => item.mac === mac && !item.protected)))
+      throw new Error("A selected device changed while the review was open. Refresh and review again.");
+    const applied = await fetch("/api/actions/apply", {method:"POST", credentials:"same-origin",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify({token:preview.token, confirmed:true})});
+    const result = await applied.json();
+    if (!applied.ok) throw new Error(result.error || applied.status);
+    quickActionMacs.clear(); actionTargetGroupId = null;
+    deviceNotice(result.detail || `${quickActionInfo(action)?.label || action} completed for ${result.count || preview.count || "the selected"} device(s).`);
+    await refreshDevices();
+  } catch (err) {
+    deviceNotice("Action not completed: " + err.message, true);
+  } finally {
+    button.disabled = false;
+    renderQuickActions();
+  }
+});
+
 function reviewRoute(preview) {
   $("route-dialog-device").textContent = preview.device || "Home device";
   $("route-dialog-address").textContent = [preview.ip, preview.mac].join(" · ");
-  const observed = preview.current === "AUTO" ? "Auto balance" : labelOf(preview.current);
-  const saved = preview.saved_current === "AUTO" ? "Auto balance" : labelOf(preview.saved_current);
+  const observed = routeLabel(preview.current);
+  const saved = routeLabel(preview.saved_current);
   $("route-dialog-before").textContent = preview.saved_current === preview.current ? observed :
     `${observed} on ER605 · NetPulse saved ${saved}`;
-  $("route-dialog-after").textContent = preview.route === "AUTO" ? "Auto balance" : `Prefer ${labelOf(preview.route)}`;
+  $("route-dialog-after").textContent = routeLabel(preview.route);
   $("route-dialog-effect").textContent = preview.effect;
   $("route-dialog-expiry").textContent = preview.expiry_label || "Until changed";
   return new Promise(resolve => {
@@ -580,9 +870,40 @@ function reviewRoute(preview) {
 $("route-cancel").onclick = () => $("route-dialog").close("cancel");
 $("route-apply").onclick = () => $("route-dialog").close("apply");
 
+$("device-traffic-load").addEventListener("click", async event => {
+  const target = currentDeviceTrafficTarget();
+  const key = deviceTrafficTargetKey(target);
+  if (!target || deviceTrafficScope !== `ready:${key}`) return;
+  const requestId = ++deviceTrafficRequestId;
+  deviceTrafficLoading = true;
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = "Measuring…";
+  $("device-traffic-status").textContent = "Reading router counters. This sample takes a few seconds.";
+  $("device-traffic-status").classList.toggle("error", false);
+  try {
+    const query = target.group_id !== undefined ? `group_id=${encodeURIComponent(target.group_id)}` :
+      `mac=${encodeURIComponent(target.macs.join(","))}`;
+    const response = await fetch(`/api/devices/traffic?${query}`, {credentials:"same-origin", cache:"no-store"});
+    const report = await response.json();
+    if (!response.ok) throw new Error(report.error || response.status);
+    if (requestId !== deviceTrafficRequestId || deviceTrafficScope !== `ready:${key}`) return;
+    renderDeviceTraffic(report);
+  } catch (error) {
+    if (requestId === deviceTrafficRequestId && deviceTrafficScope === `ready:${key}`)
+      clearDeviceTraffic("Traffic could not be loaded. Try again after the next router check.", true);
+  } finally {
+    if (requestId === deviceTrafficRequestId) {
+      deviceTrafficLoading = false;
+      renderQuickActions();
+    }
+  }
+});
+
 function renderDevices() {
     const d = deviceData;
     if (!d?.ready) return;
+    renderQuickActions();
     const scanMinutes = Math.max(1, Math.ceil((d.scan_interval_seconds || 600) / 60));
     const confirmScans = Math.max(1, d.missing_confirmation_scans || 3);
     const departedMin = Math.max(0, (confirmScans - 1) * scanMinutes);
@@ -678,19 +999,26 @@ function renderDevices() {
             " · device may sleep or block ping") :
         "LAN presence unknown · no ping reply seen yet" + (presenceCheckAge == null ? "" :
           " · checked " + duration(presenceCheckAge) + " ago");
-      const routeName = x.route === "WAN1" || x.route === "WAN2" ? labelOf(x.route) : "Auto balance";
-      const observedRoute = x.np_rule_route === "WAN1" || x.np_rule_route === "WAN2" ? labelOf(x.np_rule_route) :
-        x.np_rule_route === "AUTO" ? "Auto" : "unavailable";
+      const routeName = routeLabel(x.route);
+      const strictWan1Available = strictWanAvailable("WAN1_ONLY");
+      const strictWan2Available = strictWanAvailable("WAN2_ONLY");
+      const macTail = String(mac || "").toUpperCase().replace(/[^0-9A-F]/g, "").slice(-4);
+      const disambiguation = x.ip ? "IP " + String(x.ip) : macTail ? `MAC …${macTail}` : "No IP or MAC available";
+      const observedRoute = routeLabel(x.np_rule_route);
       const observedAt = x.np_rule_checked_at ? ` · checked ${esc(deviceDate(x.np_rule_checked_at))}` : "";
       const observedStale = x.np_rule_stale === true ? " · stale read" : "";
       const observedDrift = x.np_rule_drift === true ? " · differs from saved preference" :
         x.np_rule_drift === false ? " · matches saved preference" : "";
+      const routeAttention = x.np_rule_drift === true ? "Needs review · ER605 route differs from saved preference" :
+        x.np_rule_stale === true ? "Needs review · ER605 route read-back is stale" : "";
       const routing = x.protected ? `<p class="device-route-help">This is the NetPulse Pi. Its WAN route is protected so monitoring and remote control stay reachable.</p>` :
       d.control?.enabled && x.reserved && mac ? `<div class="device-route-control">
           <label>Internet connection<select aria-label="Internet connection for ${esc(shown)}" data-mac="${esc(mac)}">
           <option value="AUTO" ${x.route === "AUTO" ? "selected" : ""}>Auto balance</option>
           <option value="WAN1" ${x.route === "WAN1" ? "selected" : ""}>Prefer ${esc(labelOf("WAN1"))}</option>
           <option value="WAN2" ${x.route === "WAN2" ? "selected" : ""}>Prefer ${esc(labelOf("WAN2"))}</option>
+          <option value="WAN1_ONLY" ${x.route === "WAN1_ONLY" ? "selected" : ""} ${strictWan1Available ? "" : "disabled"}>Only ${esc(labelOf("WAN1"))} · no fallback${strictWan1Available ? "" : " · unavailable"}</option>
+          <option value="WAN2_ONLY" ${x.route === "WAN2_ONLY" ? "selected" : ""} ${strictWan2Available ? "" : "disabled"}>Only ${esc(labelOf("WAN2"))} · no fallback${strictWan2Available ? "" : " · unavailable"}</option>
           </select></label><label>Return to Auto<select class="device-route-duration" aria-label="Preference duration for ${esc(shown)}" data-mac="${esc(mac)}">
           <option value="0">Until changed</option><option value="3600" selected>1 hour</option><option value="21600">6 hours</option>
           <option value="86400">24 hours</option><option value="604800">7 days</option>
@@ -704,34 +1032,48 @@ function renderDevices() {
       const pauseVerified = pauseRecord?.status === "paused";
       const canPause = pauseControlsEnabled() && !x.protected && !!mac;
       const canResume = !!pauseRecord && !!pauseData.state?.cleanup_enabled;
+      const internetStatus = pauseRecord ?
+        `Internet: ${pauseVerified ? "Paused (IPv4)" : `Needs review · ${pauseRecord.status || "status unavailable"}`} · ${pauseLabel(pauseRecord)}` :
+        `No saved pause${!pauseControlsEnabled() ? ` · pause unavailable: ${pauseData.state?.reason || "awaiting safety checks"}` : ""}`;
       const internetControl = `<section class="device-route-control internet-control" aria-label="Internet pause controls">
-        <div><b>Internet</b><span class="device-history">${pauseRecord ? `${pauseRecord.status === "paused" ? "Paused (IPv4)" : `Needs review · ${pauseRecord.status || "status unavailable"}`} · ${esc(pauseLabel(pauseRecord))}` : "No saved pause"}</span></div>
         ${pauseRecord ? `<button type="button" class="internet-resume" data-action="resume" data-mac="${esc(mac)}" ${canResume ? "" : "disabled"}>${pauseVerified ? "Review resume" : "Review cleanup"}</button>` :
           `<label>Pause duration<select class="pause-duration" aria-label="Internet pause duration for ${esc(shown)}"><option value="3600" selected>1 hour</option><option value="900">15 minutes</option><option value="21600">6 hours</option><option value="0">Until resumed</option></select></label><button type="button" class="internet-pause" data-action="pause" data-mac="${esc(mac)}" ${canPause ? "" : "disabled"}>Review pause</button>`}
-        ${!pauseControlsEnabled() ? `<span class="device-route-help">${esc(pauseData.state?.reason || "Internet pause has not been enabled. Awaiting WAN2 and recovery validation.")}</span>` : ""}</section>`;
+        ${!pauseControlsEnabled() ? `<span class="device-route-help">${esc(pauseData.state?.reason || "Internet pause has not been enabled. Awaiting router enforcement and recovery validation.")}</span>` : ""}</section>`;
       const deviceStatus = x.protected ? "NetPulse Pi · protected" :
         x.listed && d.inventory_stale ? `Last scan · lease listed · stale${x.reserved ? " · reserved" : ""}` :
         x.listed ? (x.reserved ? "Lease listed · reserved" : "Lease listed · needs reservation") : "Saved reservation · not in current lease list";
+      const routeSafety = x.route === "WAN1_ONLY" || x.route === "WAN2_ONLY" ?
+        `${routeName}. If the selected WAN is offline, this device may lose Internet; no WAN fallback is configured.${x.route_expires_at ? ` Returns to Auto ${deviceDate(x.route_expires_at)}.` : " This preference stays until changed."}` :
+        x.route === "WAN1" || x.route === "WAN2" ?
+        `Priority mode uses the ER605's WAN online detection for fallback. ${x.route_expires_at ? `Returns to Auto ${deviceDate(x.route_expires_at)}.` : "This preference stays until changed."}` : "";
       return `<article class="device-row">
         <div class="device-identity"><div class="device-name">${esc(shown || "Unnamed device")}</div>
-          ${mac && !x.protected ? `<label class="device-meta"><input type="checkbox" class="group-device-select" data-mac="${esc(mac)}" ${selectedDeviceMacs.has(mac) ? "checked" : ""}> Add to group</label>` : ""}
-          <div class="device-details"><span class="device-meta">IP ${esc(x.ip || "not assigned")}</span>
-            <span class="device-meta">MAC ${esc(mac || "unavailable")}</span></div>
-          ${leaseInfo}
+          ${mac && !x.protected ? `<label class="quick-action-select"><input type="checkbox" class="quick-action-device-select" data-mac="${esc(mac)}" ${quickActionMacs.has(mac) ? "checked" : ""}> Select for action</label>` : ""}
+          ${groupDraftActive && mac && !x.protected ? `<label class="device-meta"><input type="checkbox" class="group-device-select" data-mac="${esc(mac)}" ${selectedDeviceMacs.has(mac) ? "checked" : ""}> Add to group</label>` : ""}
+          <div class="device-disambiguation"><span class="device-meta">${esc(disambiguation)}</span></div>
           ${x.group ? `<span class="device-history">Group: ${esc(x.group)}</span>` : ""}
           <span class="device-status ${x.listed && !x.protected && !d.inventory_stale ? "" : "off"}">${esc(deviceStatus)}</span>
-          <span class="device-history">${esc(presenceStatus)}</span>
-          <span class="device-history">ER605 NetPulse rule last read: ${esc(observedRoute)}${esc(observedDrift)}${observedAt}${esc(observedStale)} · not live per-flow tracking</span>
-          ${x.route === "WAN1" || x.route === "WAN2" ? `<span class="device-history">This rule stays on the ER605 if the Pi is offline. Priority mode uses the router's own WAN online detection; the rule stops applying when the ER605 reports the selected WAN offline. ${x.route_expires_at ? "NetPulse must be running at expiry to return this device to Auto; if the Pi is down then, the rule stays until NetPulse returns." : "This preference stays until changed."}</span>` : ""}
-          ${seen}${mac ? `<button type="button" class="device-rename" data-mac="${esc(mac)}" data-current="${esc(shown)}">Edit device name</button>` : ""}
-        </div><div class="device-actions">${routing}${internetControl}</div>
+          <span class="device-history">WAN preference: ${esc(routeName)}${x.route_expires_at ? ` · returns to Auto ${esc(deviceDate(x.route_expires_at))}` : x.route !== "AUTO" ? " · until changed" : ""}</span>
+          ${routeAttention ? `<span class="device-route-help note warn" role="status">${esc(routeAttention)}</span>` : ""}
+          <span class="device-history">${esc(internetStatus)}</span>
+          ${routeSafety ? `<span class="device-history">${esc(routeSafety)} This rule stays on the ER605 if the Pi is offline.</span>` : ""}
+          <details class="device-full-details"><summary>Device details</summary><div class="device-full-details-content">
+            <span class="device-meta">IP ${esc(x.ip || "not assigned")}</span>
+            <span class="device-meta">MAC ${esc(mac || "unavailable")}</span>
+            ${leaseInfo}
+            <span class="device-history">${esc(presenceStatus)}</span>
+            <span class="device-history">ER605 NetPulse rule last read: ${esc(observedRoute)}${esc(observedDrift)}${observedAt}${esc(observedStale)} · not live per-flow tracking</span>
+            ${seen}${mac ? `<button type="button" class="device-rename" data-mac="${esc(mac)}" data-current="${esc(shown)}">Edit device name</button>` : ""}
+          </div></details>
+        </div><div class="device-actions"><button type="button" class="quick-action-manage" data-mac="${esc(mac || "")}" ${!mac || x.protected ? "disabled" : ""}>Manage</button>
+          <details class="advanced-device-controls"><summary>Advanced device controls</summary>${routing}${internetControl}</details></div>
       </article>`;
     }).join("") : `<p class="soft">${d.devices.length ? "No devices match this search." : "No DHCP devices reported yet."}</p>`;
     const audit = d.route_history || [];
     $("route-history-wrap").hidden = audit.length === 0;
     $("route-history").innerHTML = audit.map(x => {
-      const oldRoute = x.old_route === "WAN1" || x.old_route === "WAN2" ? labelOf(x.old_route) : x.old_route;
-      const newRoute = x.new_route === "WAN1" || x.new_route === "WAN2" ? labelOf(x.new_route) : x.new_route;
+      const oldRoute = routeLabel(x.old_route);
+      const newRoute = routeLabel(x.new_route);
       const result = x.result === "applied" ? "verified" : "failed";
       const actor = x.actor === "telegram owner" ? "Telegram" : x.actor === "system expiry" ? "Automatic expiry" : "Dashboard";
       return `<li><span>${x.result === "applied" ? "✅" : "⚠️"}</span><span>${esc(actor)} · ${esc(x.ip)} · ${esc(oldRoute)} → ${esc(newRoute)} · ${esc(result)}${x.detail ? `<span class="device-history">${esc(x.detail)}</span>` : ""}</span><time>${esc(when(x.ts))}</time></li>`;
@@ -739,7 +1081,7 @@ function renderDevices() {
     const groupAudit = d.group_history || [];
     $("group-history-wrap").hidden = groupAudit.length === 0;
     $("group-history").innerHTML = groupAudit.map(x => {
-      const route = x.route === "WAN1" || x.route === "WAN2" ? labelOf(x.route) : x.route;
+      const route = routeLabel(x.route);
       return `<li><span>${x.result === "applied" ? "✅" : "⚠️"}</span><span>${esc(x.group)} · ${esc(route)} · ${x.count} devices · ${esc(x.result)}${x.detail ? `<span class="device-history">${esc(x.detail)}</span>` : ""}</span><time>${esc(when(x.ts))}</time></li>`;
     }).join("");
 }
@@ -747,12 +1089,16 @@ function renderDevices() {
 function renderGroupSelection() {
   $("group-selection-count").textContent = `${selectedDeviceMacs.size} selected`;
   const editor = $("group-editor");
-  editor.hidden = !($("group-name").value.trim() || selectedDeviceMacs.size);
+  const draftActive = groupDraftActive || editingGroupId !== null || !!$("group-name").value.trim() || selectedDeviceMacs.size > 0;
+  editor.hidden = !draftActive;
   $("group-editor-title").textContent = editingGroupId === null
     ? `New group${$("group-name").value.trim() ? ` · ${$("group-name").value.trim()}` : ""}`
     : `Editing ${$("group-name").value.trim() || "device group"}`;
   $("group-editor-count").textContent = `${selectedDeviceMacs.size} selected · changes are a draft`;
   $("group-selection-empty").hidden = selectedDeviceMacs.size > 0;
+  $("group-selection-empty").textContent = draftActive ?
+    "Group draft active · select devices with Add to group above. Membership changes only when you save." :
+    "Type a group name or choose Start new group to select devices.";
   $("group-save").textContent = editingGroupId === null ? "Create device group" : "Save group membership";
   $("group-save").disabled = !$("group-name").value.trim() || selectedDeviceMacs.size === 0;
   const host = $("group-selection-members");
@@ -771,7 +1117,19 @@ $("group-selection-members").addEventListener("click", e => {
   renderDevices();
 });
 
-$("group-name").addEventListener("input", renderGroupSelection);
+$("group-name").addEventListener("input", () => {
+  if ($("group-name").value.trim()) groupDraftActive = true;
+  renderDevices();
+});
+
+$("group-cancel-draft").addEventListener("click", () => {
+  groupDraftActive = false;
+  editingGroupId = null;
+  selectedDeviceMacs.clear();
+  $("group-name").value = "";
+  renderDevices();
+  deviceNotice("Group draft cleared. Saved group membership was not changed.");
+});
 
 function renderGroups(groups) {
   const host = $("device-groups");
@@ -780,6 +1138,10 @@ function renderGroups(groups) {
     const groupPauseRecords = typeof pauseData === "undefined" ? [] : (pauseData.records || []).filter(r => g.members.includes(r.mac) && r.status !== "resumed");
     const internetPauseControlsEnabled = typeof pauseData !== "undefined" && !!pauseData.state?.enabled;
     const pauseCleanupEnabled = typeof pauseData !== "undefined" && !!pauseData.state?.cleanup_enabled;
+    const pauseUnavailableReason = typeof pauseData === "undefined" ? "awaiting safety checks" : pauseData.state?.reason || "awaiting safety checks";
+    const groupPauseSummary = groupPauseRecords.length ?
+      `${groupPauseRecords.length} member${groupPauseRecords.length === 1 ? "" : "s"} with saved Internet pause state · ${groupPauseRecords.map(r => r.status === "paused" ? "Paused (IPv4)" : `Needs review (${r.status || "status unavailable"})`).join(", ")}` :
+      `No saved pause for this group${!internetPauseControlsEnabled ? ` · pause unavailable: ${pauseUnavailableReason}` : ""}`;
     const names = g.members.map(mac => {
       const d = deviceData.devices.find(item => item.mac === mac);
       if (!d) return mac + " (unavailable)";
@@ -792,6 +1154,13 @@ function renderGroups(groups) {
     const unreservedCount = Math.max(0, g.members.length - reservedCount);
     const controlsReady = !!deviceData.control?.enabled;
     const activeRoute = g.route || "AUTO";
+    const strictWan1Available = strictWanAvailable("WAN1_ONLY");
+    const strictWan2Available = strictWanAvailable("WAN2_ONLY");
+    const strictMemberPresent = activeRoute === "WAN1_ONLY" || activeRoute === "WAN2_ONLY" ||
+      g.members.some(mac => {
+        const member = (deviceData.devices || []).find(item => item.mac === mac);
+        return member?.route === "WAN1_ONLY" || member?.route === "WAN2_ONLY";
+      });
     const groupSuggestion = g.suggested_wan;
     const suggestionBasis = groupSuggestion?.reason?.startsWith("comparable recent throughput")
       ? "comparable download/upload tests broke a ping tie"
@@ -811,10 +1180,12 @@ function renderGroups(groups) {
       g.route_readback === "drift" ? `${g.route_drift_count} ER605 rules differ from saved preferences` :
       g.route_readback === "stale" ? "ER605 rule read-back is stale" :
       `ER605 rule read-back unavailable for ${g.route_unknown_count} members`;
-    const smartReady = !blockedCount && activeRoute !== "MIXED" && g.route_readback === "matches";
-    const smartStatus = smartEnabled
+    const smartReady = !strictMemberPresent && !blockedCount && activeRoute !== "MIXED" && g.route_readback === "matches";
+    const smartStatus = strictMemberPresent ?
+      `Smart WAN ${smartEnabled ? "blocked" : "unavailable"} · an Only mode has no fallback; choose Auto balance or Prefer WAN first` : smartEnabled
       ? `Smart WAN on · automatic stable changes${g.smart_last_action_at ? ` · last action ${duration(Math.max(0, Date.now()/1000 - g.smart_last_action_at))} ago` : ""}`
       : smartReady ? "Smart WAN off · needs explicit opt-in" : "Smart WAN unavailable · resolve member reservations and route read-back first";
+    const groupRouteLabel = routeLabel(activeRoute);
     const memberSummary = `${g.members.length} member${g.members.length === 1 ? "" : "s"} · ${reservedCount} with enabled reservations`;
     const speedTests = Object.entries(deviceData.recent_speeds || {})
       .filter(([wan, sample]) => ["WAN1", "WAN2"].includes(wan) && sample && Number.isFinite(sample.down_mbps))
@@ -826,8 +1197,11 @@ function renderGroups(groups) {
       ? `Closest-in-time tests (≤15 min apart): fastest download ${comparisonName(speedComparison.download_winner)} · fastest upload ${comparisonName(speedComparison.upload_winner)} (can break a ping tie only when both favor the same WAN by ≥15%, health/loss/jitter are no worse, and live RTT differs by ≤2 ms)`
       : "No close-in-time speed test pair to compare";
     return `<article class="device-row"><div class="device-identity"><div class="device-name">${esc(g.name)}</div>
+      <button type="button" class="quick-action-group" data-id="${esc(g.id)}">Choose action</button>
       <span class="device-history">${esc(memberSummary)}</span>
+      <span class="device-history">WAN preference: ${esc(groupRouteLabel)}</span>
       <span class="device-history">${esc(routeReadback)}</span>
+      <span class="device-history">${esc(groupPauseSummary)}</span>
       <span class="smart-state">${esc(smartStatus)}</span><span class="device-history">${smartEnabled ? "Waits for stable health/latency, then applies to every member; 15-minute cooldown." : ""}</span>
       </div><details class="group-details"><summary>Show members and connection details</summary><div class="group-details-content">
         <span class="device-history">${names.length ? esc(names.join(", ")) : "No member details available"}</span>
@@ -836,20 +1210,22 @@ function renderGroups(groups) {
         <span class="device-history">Recent speed tests (24h; used only for a close-ping tie): ${speedTests.length ? speedTests.map(esc).join(" · ") : "none available"}</span>
         <span class="device-history">${esc(speedComparisonText)}</span>
       </div></details>
-      <div class="device-route-control group-route-controls"><label>Group WAN preference${activeRoute === "MIXED" ? " · members currently differ" : g.expiry_mixed ? " · expiry varies" : ""}<select class="group-route-choice" data-id="${g.id}">
+      <details class="advanced-group-controls"><summary>Advanced group controls</summary><div class="device-route-control group-route-controls"><label>Group WAN preference${activeRoute === "MIXED" ? " · members currently differ" : g.expiry_mixed ? " · expiry varies" : ""}<select class="group-route-choice" data-id="${g.id}">
         ${activeRoute === "MIXED" ? `<option value="MIXED" selected disabled>Mixed member routes</option>` : ""}
         <option value="AUTO" ${activeRoute === "AUTO" ? "selected" : ""}>Auto balance</option>
         <option value="WAN1" ${activeRoute === "WAN1" ? "selected" : ""}>Prefer ${esc(labelOf("WAN1"))}</option>
-        <option value="WAN2" ${activeRoute === "WAN2" ? "selected" : ""}>Prefer ${esc(labelOf("WAN2"))}</option></select></label>
+        <option value="WAN2" ${activeRoute === "WAN2" ? "selected" : ""}>Prefer ${esc(labelOf("WAN2"))}</option>
+        <option value="WAN1_ONLY" ${activeRoute === "WAN1_ONLY" ? "selected" : ""} ${strictWan1Available ? "" : "disabled"}>Only ${esc(labelOf("WAN1"))} · no fallback${strictWan1Available ? "" : " · unavailable"}</option>
+        <option value="WAN2_ONLY" ${activeRoute === "WAN2_ONLY" ? "selected" : ""} ${strictWan2Available ? "" : "disabled"}>Only ${esc(labelOf("WAN2"))} · no fallback${strictWan2Available ? "" : " · unavailable"}</option></select></label>
         <label>Duration<select class="group-route-duration" data-id="${g.id}"><option value="0">Until changed</option><option value="3600" selected>1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option><option value="604800">7 days</option></select></label>
-        <label title="Applies a stable measured WAN preference to every eligible group member"><input type="checkbox" class="group-smart-routing" data-id="${g.id}" ${smartEnabled ? "checked" : ""} ${!smartEnabled && (!smartReady || !controlsReady) ? "disabled" : ""}> Smart WAN</label>
+        <label title="Applies a stable measured WAN preference to every eligible group member"><input type="checkbox" class="group-smart-routing" data-id="${g.id}" ${smartEnabled ? "checked" : ""} ${strictMemberPresent || (!smartEnabled && (!smartReady || !controlsReady)) ? "disabled" : ""}> Smart WAN</label>
         ${unreservedCount ? `<button type="button" class="group-reservation-preview" data-id="${g.id}" ${controlsReady ? "" : "disabled"}>Review ${unreservedCount} reservation${unreservedCount === 1 ? "" : "s"}</button>` : ""}
         ${groupSuggestion && !blockedCount ? `<button type="button" class="group-suggestion-preview" data-id="${g.id}" data-wan="${esc(groupSuggestion.wan)}" ${controlsReady ? "" : "disabled"}>Review suggested route</button>` : ""}
         <button type="button" class="group-route-preview" data-id="${g.id}" ${blockedCount || !controlsReady ? "disabled" : ""}>Review group change</button>
         ${groupPauseRecords.length ? (groupPauseRecords.some(r => ["paused","applying","resuming","error"].includes(r.status)) ? `<button type="button" class="internet-resume" data-action="resume" data-id="${g.id}" ${pauseCleanupEnabled ? "" : "disabled"}>Review Internet cleanup</button>` : `<span class="device-route-help">Pause needs manual review · ${groupPauseRecords.map(r => esc(r.label || r.mac)).join(", ")}</span>`) : `<label>Internet pause duration<select class="pause-duration" data-id="${g.id}"><option value="3600" selected>1 hour</option><option value="900">15 minutes</option><option value="21600">6 hours</option><option value="0">Until resumed</option></select></label><button type="button" class="internet-pause" data-action="pause" data-id="${g.id}" ${internetPauseControlsEnabled ? "" : "disabled"}>Review Internet pause</button>`}
         <button type="button" class="group-edit-members" data-id="${g.id}">Edit members</button><button type="button" class="group-delete" data-id="${g.id}">Delete group</button>
-      </div>${!internetPauseControlsEnabled ? `<p class="device-route-help">${typeof pauseData === "undefined" ? "Internet pause has not been enabled. Awaiting WAN2 and recovery validation." : esc(pauseData.state?.reason || "Internet pause has not been enabled. Awaiting WAN2 and recovery validation.")}</p>` : ""}${!controlsReady ? `<p class="device-route-help">WAN controls are locked: ${esc(deviceData.control?.reason || "control readiness is unavailable")}</p>` :
-        blockedCount ? `<p class="device-route-help">Enable DHCP reservations for unreserved members, and remove protected or unavailable members before steering this group.</p>` : ""}</article>`;
+      </div></details>${!internetPauseControlsEnabled ? `<p class="device-route-help">${typeof pauseData === "undefined" ? "Internet pause has not been enabled. Awaiting router enforcement and recovery validation." : esc(pauseData.state?.reason || "Internet pause has not been enabled. Awaiting router enforcement and recovery validation.")}</p>` : ""}${!controlsReady ? `<p class="device-route-help">WAN controls are locked: ${esc(deviceData.control?.reason || "control readiness is unavailable")}</p>` :
+        blockedCount ? `<p class="device-route-help">Quick action review can prepare reservations for eligible listed devices. Advanced group routing needs every member reserved and available; remove protected or unavailable members first.</p>` : ""}</article>`;
   }).join("");
 }
 
@@ -895,8 +1271,16 @@ $("presence-toggle").addEventListener("change", async e => {
 });
 
 $("devices").addEventListener("change", e => {
+  const actionBox = e.target.closest(".quick-action-device-select");
+  if (actionBox) {
+    actionTargetGroupId = null;
+    actionBox.checked ? quickActionMacs.add(actionBox.dataset.mac) : quickActionMacs.delete(actionBox.dataset.mac);
+    renderQuickActions();
+    return;
+  }
   const box = e.target.closest(".group-device-select"); if (!box) return;
-  box.checked ? selectedDeviceMacs.add(box.dataset.mac) : selectedDeviceMacs.delete(box.dataset.mac);
+  if (box.checked) { groupDraftActive = true; selectedDeviceMacs.add(box.dataset.mac); }
+  else selectedDeviceMacs.delete(box.dataset.mac);
   renderGroupSelection();
 });
 
@@ -913,18 +1297,26 @@ $("group-save").addEventListener("click", async () => {
     const r = await fetch("/api/device-groups/save", {method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({id: editingGroupId, name, members:[...selectedDeviceMacs]})});
     const result = await r.json(); if (!r.ok) throw new Error(result.error || r.status);
-    editingGroupId = null; selectedDeviceMacs.clear();
+    editingGroupId = null; groupDraftActive = false; selectedDeviceMacs.clear(); $("group-name").value = "";
     deviceNotice("Saved " + result.name + " with " + result.members.length + " device" + (result.members.length === 1 ? "" : "s") + ". No routes were changed.");
     await refreshDevices();
   } catch (err) { deviceNotice("Group not saved: " + err.message, true); }
 });
 
 $("group-new").addEventListener("click", () => {
-  editingGroupId = null; selectedDeviceMacs.clear(); $("group-name").value = ""; renderDevices();
+  groupDraftActive = true; editingGroupId = null; selectedDeviceMacs.clear(); $("group-name").value = ""; renderDevices();
   deviceNotice("Select the devices for a new group.");
 });
 
 $("device-groups").addEventListener("click", async e => {
+  const quickGroup = e.target.closest(".quick-action-group");
+  if (quickGroup) {
+    actionTargetGroupId = Number(quickGroup.dataset.id);
+    quickActionMacs.clear();
+    renderDevices();
+    $("quick-actions-title").scrollIntoView({behavior:"smooth", block:"center"});
+    return;
+  }
   const pauseButton = e.target.closest(".internet-pause,.internet-resume");
   if (pauseButton) { await requestPause(pauseButton, true); return; }
   const edit = e.target.closest(".group-edit-members"), remove = e.target.closest(".group-delete"),
@@ -934,6 +1326,7 @@ $("device-groups").addEventListener("click", async e => {
   if (edit) {
     const g = deviceData.groups.find(x => x.id === Number(edit.dataset.id)); if (!g) return;
     editingGroupId = g.id;
+    groupDraftActive = true;
     selectedDeviceMacs.clear(); g.members.forEach(mac => selectedDeviceMacs.add(mac));
     $("group-name").value = g.name; renderDevices();
     $("group-name").scrollIntoView({behavior:"smooth", block:"center"}); return;
@@ -945,7 +1338,7 @@ $("device-groups").addEventListener("click", async e => {
     if (!confirm("Delete this group? The devices and their current WAN routes will not change." + pauseNote)) return;
     try { const r = await fetch("/api/device-groups/delete", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id:Number(remove.dataset.id)})});
       const data = await r.json(); if (!r.ok) throw new Error(data.error || r.status);
-      if (editingGroupId === Number(remove.dataset.id)) { editingGroupId = null; selectedDeviceMacs.clear(); $("group-name").value = ""; }
+      if (editingGroupId === Number(remove.dataset.id)) { editingGroupId = null; groupDraftActive = false; selectedDeviceMacs.clear(); $("group-name").value = ""; }
       deviceNotice("Group deleted. Device routes were not changed."); await refreshDevices(); }
     catch (err) { deviceNotice("Group not deleted: " + err.message, true); } return;
   }
@@ -989,12 +1382,13 @@ $("device-groups").addEventListener("click", async e => {
         expiry_seconds:Number(card.querySelector(".group-route-duration").value)})});
     const preview = await r.json(); if (!r.ok) throw new Error(preview.error || r.status);
     $("group-route-summary").textContent = preview.group + ": " + preview.members.length + " devices → " +
-      (preview.route === "AUTO" ? "Auto balance" : "Prefer " + labelOf(preview.route)) + " (" + preview.expiry_label + ")";
+      routeLabel(preview.route) + " (" + preview.expiry_label + ")";
     $("group-route-members").innerHTML = preview.members.map(d => {
       const currentExpiry = d.current_expires_at ? ` · until ${deviceDate(d.current_expires_at)}` :
-        (d.current === "WAN1" || d.current === "WAN2" ? " · until changed" : "");
-      const saved = d.saved_current && d.saved_current !== d.current ? ` · saved ${d.saved_current}` : "";
-      return `<div class="device-row"><div><b>${esc(d.name)}</b><div class="device-meta">${esc(d.ip)} · ${esc(d.mac)}</div></div><span>${esc(d.current + currentExpiry + saved)} → ${esc(preview.route)}</span></div>`;
+        (d.current !== "AUTO" ? " · until changed" : "");
+      const current = routeLabel(d.current);
+      const saved = d.saved_current && d.saved_current !== d.current ? ` · saved ${routeLabel(d.saved_current)}` : "";
+      return `<div class="device-row"><div><b>${esc(d.name)}</b><div class="device-meta">${esc(d.ip)} · ${esc(d.mac)}</div></div><span>${esc(current + currentExpiry + saved)} → ${esc(routeLabel(preview.route))}</span></div>`;
     }).join("");
     $("group-route-effect").textContent = preview.effect;
     const dialog = $("group-route-dialog");
@@ -1002,7 +1396,7 @@ $("device-groups").addEventListener("click", async e => {
     if (!accepted) return;
     const a = await fetch("/api/device-groups/route/apply", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({token:preview.token})});
     const result = await a.json(); if (!a.ok) throw new Error(result.error || a.status);
-    deviceNotice(`Applied ${result.route} to all ${result.count} devices in ${result.group}. ${result.detail}`); await refreshDevices();
+    deviceNotice(`Applied ${routeLabel(result.route)} to all ${result.count} devices in ${result.group}. ${result.detail}`); await refreshDevices();
   } catch (err) { deviceNotice("Group route not changed completely: " + err.message, true); await refreshDevices(); }
   finally { button.disabled = false; }
 });
@@ -1107,6 +1501,15 @@ async function refreshPiHealth() {
 }
 
 $("devices").addEventListener("click", async e => {
+  const manage = e.target.closest(".quick-action-manage");
+  if (manage) {
+    actionTargetGroupId = null;
+    quickActionMacs.clear();
+    quickActionMacs.add(manage.dataset.mac);
+    renderDevices();
+    $("quick-actions-title").scrollIntoView({behavior:"smooth", block:"center"});
+    return;
+  }
   const pauseButton = e.target.closest(".internet-pause,.internet-resume");
   if (pauseButton) { await requestPause(pauseButton, false); return; }
   const reserveButton = e.target.closest(".device-reserve-preview");
