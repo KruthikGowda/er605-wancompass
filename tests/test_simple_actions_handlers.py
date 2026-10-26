@@ -63,6 +63,18 @@ class SimpleActionHandlers(TestCase):
         self.assertEqual(first['fingerprint'], second['fingerprint'])
         self.assertNotIn('opaque-token', first['fingerprint'])
 
+    def test_pause_duration_is_preserved_including_until_resumed(self):
+        fingerprints = set()
+        for duration in (0, 900, 3600, 21600):
+            review = self.handlers['quick_preview']({
+                'kind': 'devices', 'items': [{'mac': self.mac}],
+                'action': 'pause', 'duration_seconds': duration}, '101')
+            self.assertEqual(self.preview_calls[-1]['duration_seconds'], duration)
+            self.assertIn('confirm_token', review)
+            fingerprints.add(review['fingerprint'])
+        self.assertEqual(len(fingerprints), 4)
+        self.assertEqual(self.apply_calls, [])
+
     def test_group_hooks_create_remove_and_rename_without_router_writes(self):
         self.s.mon.router = SimpleNamespace(snap=SimpleNamespace(
             raw=self.s.board.get_extra('router_raw'), checked_at=self.s.clock()))

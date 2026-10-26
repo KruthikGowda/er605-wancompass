@@ -38,6 +38,8 @@ MAX_SELECTED = 128
 MAX_SESSIONS = 32
 MAX_TEXT = 3900
 _NUMBER_SELECTION = re.compile(r"\s*\d+(?:\s*,\s*\d+)*\s*\Z")
+PAUSE_DURATIONS = (("15 minutes", 900), ("1 hour", 3600),
+                   ("6 hours", 21600), ("Until resumed", 0))
 
 
 def _single_line(value: object, limit: int = 72) -> str:
@@ -89,6 +91,7 @@ class _Session:
     group_name: str | None = None
     review_kind: str = "router"
     review_payload: dict | None = None
+    duration_seconds: int | None = None
 
 
 class QuickPicker:
@@ -252,9 +255,21 @@ class QuickPicker:
             if verb == "back":
                 return self._back_to_list(session)
             return "Choose one of the available actions.", self._actions_markup(session)
+        if session.phase == "duration":
+            if verb == "duration" and 0 <= index < len(PAUSE_DURATIONS):
+                session.duration_seconds = PAUSE_DURATIONS[index][1]
+                return self._review_view(session, "pause")
+            if verb == "back":
+                session.duration_seconds = None
+                session.action = None
+                session.phase = "action"
+                return self._actions_view(session)
+            return "Choose one of the listed pause durations.", self._duration_markup(session)
         if session.phase == "review" and verb == "confirm":
             return self._confirm(session)
         if session.phase == "review" and verb == "back":
+            session.duration_seconds = None
+            session.action = None
             session.phase = "list" if session.purpose in {"group_members", "create_group", "device_members"} else "action"
             return self._list_view(session) if session.phase == "list" else self._actions_view(session)
         if session.phase == "info" and verb == "back":
@@ -266,7 +281,7 @@ class QuickPicker:
 
     @staticmethod
     def _parse_data(data: str) -> tuple[str, int, str, int] | None:
-        match = re.fullmatch(r"qp:([A-Za-z0-9_-]{6,16}):(\d+):(item|page|next|action|back|confirm|cancel|create):(\d+|m)", data)
+        match = re.fullmatch(r"qp:([A-Za-z0-9_-]{6,16}):(\d+):(item|page|next|action|duration|back|confirm|cancel|create):(\d+|m)", data)
         if not match:
             return None
         nonce, revision, verb, raw_index = match.groups()
@@ -487,6 +502,12 @@ class QuickPicker:
     def _dispatch_action(self, session: _Session, action: str) -> tuple[str, dict]:
         if action == "bandwidth":
             return self._bandwidth_view(session)
+        if action == "pause":
+            session.action = action
+            session.duration_seconds = None
+            session.phase = "duration"
+            session.revision += 1
+            return self._duration_view(session)
         if action in {"add_to_group", "remove_from_group"}:
             session.source_items = [dict(session.choices[i]) for i in session.selected]
             session.group_operation = "add" if action == "add_to_group" else "remove"
@@ -630,6 +651,7 @@ class QuickPicker:
                                  {"text": "Cancel", "callback_data": self._data(session, "cancel", 0)}]]}
 
     def _back_to_list(self, session: _Session) -> tuple[str, dict]:
+        session.duration_seconds = None
         if session.purpose == "group_members" and session.group_target:
             groups = self._read_choices("groups")
             session.kind = "groups"
@@ -672,11 +694,24 @@ class QuickPicker:
             {"text": "‹ Back", "callback_data": self._data(session, "back", 0)},
         ], [{"text": "Cancel", "callback_data": self._data(session, "cancel", 0)}]]}
 
+    def _duration_view(self, session: _Session) -> tuple[str, dict]:
+        session.phase = "duration"
+        session.revision += 1
+        return "Choose how long to pause Internet:", self._duration_markup(session)
+
+    def _duration_markup(self, session: _Session) -> dict:
+        buttons = [{"text": label, "callback_data": self._data(session, "duration", index)}
+                   for index, (label, _seconds) in enumerate(PAUSE_DURATIONS)]
+        controls = [{"text": "‹ Back", "callback_data": self._data(session, "back", 0)},
+                    {"text": "Cancel", "callback_data": self._data(session, "cancel", 0)}]
+        return {"inline_keyboard": [buttons[:2], buttons[2:], controls]}
+
     def _review_view(self, session: _Session, action: str) -> tuple[str, dict]:
         fresh = self._read_choices(session.kind)
         if not self._same_selection(session, fresh):
             session.choices = fresh
             session.selected = []
+            session.duration_seconds = None
             session.phase = "list"
             session.revision += 1
             return "The inventory changed. Choose the devices or groups again.", self._list_markup(session)
@@ -770,9 +805,12 @@ class QuickPicker:
 
     @staticmethod
     def _payload(session: _Session, action: str) -> dict:
-        return {"kind": session.kind,
-                "items": [session.choices[i] for i in session.selected],
-                "action": action}
+        payload = {"kind": session.kind,
+                   "items": [session.choices[i] for i in session.selected],
+                   "action": action}
+        if action == "pause" and session.duration_seconds is not None:
+            payload["duration_seconds"] = session.duration_seconds
+        return payload
 
     @staticmethod
     def _data(session: _Session, verb: str, index: int) -> str:

@@ -6,6 +6,9 @@ Open **Devices** or **Groups**. Tap a listed item, or reply with its number; `1,
 selects two items on the current page. Choose an action and confirm its review.
 You do not need to type a MAC address, a command, or a confirmation token.
 
+Pause offers **15 minutes**, **1 hour**, **6 hours**, or **Until resumed** before
+the final review. Timed resume requires NetPulse to be running.
+
 **Groups** also offers Create, Add devices, Remove devices, Rename, and Delete.
 Create and Rename ask for an ordinary group name. All other choices come from
 lists. **Help / More** contains reports, Pi health, speed tests, and alert controls.

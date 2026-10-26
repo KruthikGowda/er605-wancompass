@@ -1159,6 +1159,7 @@ class Monitor:
                 if len(text) > 3500:
                     return {"text": "Too many devices for one chat review. Select fewer devices, or review this group in dashboard."}
                 stable = {key: preview.get(key) for key in ("action", "members", "group", "effect", "reservation_count")}
+                stable["duration_seconds"] = duration
                 return {"text": text, "confirm_token": preview["token"],
                         "fingerprint": preview.get("fingerprint") or json.dumps(stable, sort_keys=True, separators=(",", ":"))}
             except (ControlError, ValueError, TypeError) as exc:
