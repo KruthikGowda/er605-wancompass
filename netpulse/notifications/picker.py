@@ -382,12 +382,20 @@ class QuickPicker:
         if session.kind == "groups" and session.purpose == "router":
             if len(session.selected) != 1 or not self._group_preview or not self._group_apply:
                 return []
-            return [
+            try:
+                value = self._choices()
+                actions = value.get("actions", []) if isinstance(value, dict) else []
+                actions = [dict(action) for action in actions if isinstance(action, dict)]
+            except Exception:
+                actions = []
+            actions.append({"id": "bandwidth", "label": "Bandwidth and priority"})
+            actions.extend([
                 {"id": "group_add", "label": "Add devices"},
                 {"id": "group_remove", "label": "Remove devices"},
                 {"id": "group_rename", "label": "Rename group"},
                 {"id": "group_delete", "label": "Delete group"},
-            ]
+            ])
+            return actions
         try:
             value = self._choices()
             actions = value.get("actions", []) if isinstance(value, dict) else []
