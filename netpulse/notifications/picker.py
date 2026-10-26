@@ -418,13 +418,39 @@ class QuickPicker:
     def _actions_markup(self, session: _Session, actions: list[dict] | None = None) -> dict:
         actions = actions if actions is not None else self._read_actions(session)
         rows = []
-        enabled_index = 0
-        for action in actions:
+        enabled = [action for action in actions if action.get("enabled", True)]
+        callback_indexes = {action.get("id"): index for index, action in enumerate(enabled)}
+        pair_ids = {
+            "prefer_wan1": "prefer_wan2", "prefer_wan2": "prefer_wan1",
+            "pause": "resume", "resume": "pause",
+            "only_wan1": "only_wan2", "only_wan2": "only_wan1",
+            "group_add": "group_remove", "group_remove": "group_add",
+            "group_rename": "group_delete", "group_delete": "group_rename",
+            "add_to_group": "remove_from_group", "remove_from_group": "add_to_group",
+        }
+        consumed = set()
+        for enabled_index, action in enumerate(enabled):
+            if enabled_index in consumed:
+                continue
             if not action.get("enabled", True):
                 continue
-            rows.append([{"text": _single_line(action.get("label") or action.get("id"), 56),
-                          "callback_data": self._data(session, "action", enabled_index)}])
-            enabled_index += 1
+            action_id = action.get("id")
+            label = _single_line(action.get("label") or action_id, 56)
+            button = {"text": label, "callback_data": self._data(session, "action", enabled_index)}
+            partner_id = pair_ids.get(action_id)
+            partner_index = callback_indexes.get(partner_id)
+            pair = None
+            if partner_index is not None and partner_index > enabled_index:
+                partner = enabled[partner_index]
+                partner_label = _single_line(partner.get("label") or partner_id, 56)
+                if len(label) <= 20 and len(partner_label) <= 20:
+                    pair = {"text": partner_label,
+                            "callback_data": self._data(session, "action", partner_index)}
+            if action_id not in {"auto", "bandwidth"} and pair is not None:
+                rows.append([button, pair])
+                consumed.add(partner_index)
+            else:
+                rows.append([button])
         rows.append([{"text": "‹ Back", "callback_data": self._data(session, "back", 0)},
                      {"text": "Cancel", "callback_data": self._data(session, "cancel", 0)}])
         return {"inline_keyboard": rows}

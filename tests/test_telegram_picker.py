@@ -126,6 +126,45 @@ class QuickPickerConversation(unittest.TestCase):
         self.assertIn("inventory changed", text)
         self.assertEqual(self.applied, [])
 
+    def test_action_rows_pair_related_buttons_and_keep_enabled_callback_indexes(self):
+        self.rows["actions"] = [
+            {"id": "auto", "label": "Autobalance", "enabled": True},
+            {"id": "pause", "label": "Pause internet", "enabled": False,
+             "reason": "not configured"},
+            {"id": "prefer_wan1", "label": "Prefer WAN1", "enabled": True},
+            {"id": "prefer_wan2", "label": "Prefer WAN2", "enabled": True},
+            {"id": "pause", "label": "Pause internet", "enabled": True},
+            {"id": "resume", "label": "Resume internet", "enabled": True},
+            {"id": "only_wan1", "label": "Only WAN1", "enabled": True},
+            {"id": "only_wan2", "label": "Only WAN2", "enabled": True},
+            {"id": "custom", "label": "A custom action with a label longer than twenty", "enabled": True},
+        ]
+        _, _ = self.picker.begin("devices", OWNER, OWNER)
+        _, markup = self.picker.message("1", OWNER, OWNER)
+        keyboard = markup["inline_keyboard"]
+        action_rows = [row for row in keyboard if all(button["text"] not in {"‹ Back", "Cancel"}
+                                                      for button in row)]
+        self.assertEqual([[button["text"] for button in row] for row in action_rows], [
+            ["Autobalance"], ["Prefer WAN1", "Prefer WAN2"],
+            ["Pause internet", "Resume internet"], ["Only WAN1", "Only WAN2"],
+            ["A custom action with a label longer than twenty"], ["Bandwidth and priority"],
+        ])
+        callback_indexes = {button["text"]: int(button["callback_data"].rsplit(":", 1)[1])
+                            for row in action_rows for button in row}
+        self.assertEqual(callback_indexes, {
+            "Autobalance": 0, "Prefer WAN1": 1, "Prefer WAN2": 2,
+            "Pause internet": 3, "Resume internet": 4,
+            "Only WAN1": 5, "Only WAN2": 6,
+            "A custom action with a label longer than twenty": 7,
+            "Bandwidth and priority": 8,
+        })
+        self.assertEqual(sum(button["text"] == "Pause internet"
+                             for row in action_rows for button in row), 1,
+                         "disabled actions never get a clickable button")
+
+        self._tap(self._callback(markup, "action", callback_indexes["Prefer WAN2"]))
+        self.assertEqual(self.previews[-1][0]["action"], "prefer_wan2")
+
     def test_bot_keyboard_is_minimal_and_legacy_commands_parse(self):
         self.assertEqual(len(KEYBOARD["keyboard"]), 4)
         self.assertEqual(parse_command("/route@MyNetPulseBot Home WAN1"), "route")
@@ -216,6 +255,11 @@ class GroupPickerConversations(unittest.TestCase):
         self.assertIn("Prefer WAN 2", text)
         self.assertIn("Bandwidth and priority", text)
         self.assertIn("Add devices", text)
+        row_labels = [[button["text"] for button in row]
+                      for row in markup["inline_keyboard"]
+                      if not any(button["text"] in {"‹ Back", "Cancel"} for button in row)]
+        self.assertIn(["Add devices", "Remove devices"], row_labels)
+        self.assertIn(["Rename group", "Delete group"], row_labels)
         text, markup = self._tap(self._button(markup, "Prefer WAN 2"))
         self.assertIn("Review route change for Home", text)
         self.assertEqual(route_previews[0], ({"kind": "groups", "items": [self.groups[0]],
