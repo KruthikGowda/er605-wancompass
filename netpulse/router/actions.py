@@ -20,14 +20,20 @@ ACTION_ROUTES = {"auto": "AUTO", "prefer_wan1": "WAN1", "prefer_wan2": "WAN2",
 ACTION_SECONDS = 120
 MAX_TARGETS = 128
 MAX_PENDING = 2048
+BANDWIDTH_ACTIONS = {
+    f"bandwidth_wan2_{rate}m": (rate * 1000, rate * 1000)
+    for rate in (2, 5, 10, 25, 50)
+}
+BANDWIDTH_ACTIONS["bandwidth_wan2_remove"] = None
 
 
 class ActionControl:
     """Combine existing verified router and pause controls behind one reviewed token."""
 
-    def __init__(self, routes, pause=None):
+    def __init__(self, routes, pause=None, bandwidth=None):
         self.routes = routes
         self.pause = pause
+        self.bandwidth = bandwidth
         self.router = routes.router
         self.client = routes.client
         self.db_path = routes.db_path
@@ -53,7 +59,22 @@ class ActionControl:
                             "reason": route.get("strict_wan_reason", "")
                             if not route.get("strict_wan_available") else ""})
         return {"enabled": bool(route.get("enabled")), "actions": actions,
+                "bandwidth_options": self.bandwidth_options(),
+                "bandwidth_caps": self.bandwidth.records() if self.bandwidth else [],
                 "reason": route.get("reason", "")}
+
+    def bandwidth_options(self):
+        if self.bandwidth is None:
+            return []
+        state = self.bandwidth.state()
+        options = []
+        for action, rates in BANDWIDTH_ACTIONS.items():
+            enabled = state.get("enabled") if rates else state.get("cleanup_enabled", state.get("enabled"))
+            label = (f"WAN 2 · {rates[0] // 1000} Mbps per device" if rates
+                     else "Remove WAN 2 limits")
+            options.append({"id": action, "label": label, "enabled": bool(enabled),
+                            "reason": state.get("reason", "") if not enabled else ""})
+        return options
 
     def preview(self, *, macs=None, group_id=None, action, actor, duration_seconds=0,
                 management_ip=None):
@@ -62,9 +83,15 @@ class ActionControl:
         if not isinstance(actor, str) or not actor.strip():
             raise ControlError("An actor is required for confirmation.")
         action = str(action or "").lower()
-        if action not in (*ACTION_ROUTES, "pause", "resume"):
+        if action not in (*ACTION_ROUTES, *BANDWIDTH_ACTIONS, "pause", "resume"):
             raise ControlError("Choose Auto, Prefer WAN 1, Prefer WAN 2, pause, or resume.")
-        if action in ("pause", "resume"):
+        if action in BANDWIDTH_ACTIONS:
+            option = next((item for item in self.bandwidth_options() if item["id"] == action), None)
+            if not option or not option["enabled"]:
+                raise ControlError((option or {}).get("reason") or "Bandwidth controls are unavailable.")
+            if isinstance(duration_seconds, bool) or duration_seconds != 0:
+                raise ControlError("Bandwidth limits stay until changed; no duration is supported.")
+        elif action in ("pause", "resume"):
             if self.pause is None:
                 raise ControlError("Internet pause controls are unavailable.")
             status = self.pause.state()
@@ -123,6 +150,15 @@ class ActionControl:
                    "actor": actor.strip(), "duration_seconds": duration_seconds,
                    "management_ip": management_ip,
                    "group": group_snapshot, "expires": now + ACTION_SECONDS}
+        bandwidth_review = None
+        if action in BANDWIDTH_ACTIONS:
+            rates = BANDWIDTH_ACTIONS[action]
+            bandwidth_review = self.bandwidth.preview(
+                targets, actor.strip(), down_kbps=rates[0] if rates else None,
+                up_kbps=rates[1] if rates else None, remove=rates is None,
+                group_snapshot=group_snapshot)
+            payload["bandwidth_token"] = bandwidth_review["token"]
+            payload["bandwidth_fingerprint"] = bandwidth_review["fingerprint"]
         payload["fingerprint"] = self._fingerprint(payload)
         with self._lock:
             self._pending = {k: v for k, v in self._pending.items() if v["expires"] > now}
@@ -135,7 +171,8 @@ class ActionControl:
                               for t in targets],
                   "count": len(targets),
                   "reservation_count": sum(t["reservation_needed"] for t in targets),
-                  "effect": self._effect(action, targets, duration_seconds)}
+                  "effect": (bandwidth_review["effect"] if bandwidth_review else
+                             self._effect(action, targets, duration_seconds))}
         if group_snapshot:
             result["group"] = group_snapshot["name"]
         return result
@@ -151,6 +188,7 @@ class ActionControl:
                      "route_expires_at")}
                    for target in payload["targets"]]
         value = {"action": payload["action"], "route": payload.get("route"),
+                 "bandwidth_fingerprint": payload.get("bandwidth_fingerprint"),
                  "duration_seconds": payload["duration_seconds"], "actor": payload["actor"],
                  "management_ip": payload.get("management_ip"), "group": normalized_group,
                  "targets": targets}
@@ -218,6 +256,9 @@ class ActionControl:
                     with self.routes._lock:
                         self.routes._pending.pop(route_preview["token"], None)
                     current = route_preview["observed_current"]
+            elif action in BANDWIDTH_ACTIONS:
+                self._check_management_target(mac, ip, management_ip)
+                current = observed["route"]
             else:
                 raise ControlError("Unsupported combined action.")
             targets.append({"mac": mac, "ip": ip, "name": str(name)[:80],
@@ -300,6 +341,8 @@ class ActionControl:
         with self._write_lock:
             self._check_group(pending["group"])
             fresh = self._fresh_preflight(pending)
+            if pending["action"] in BANDWIDTH_ACTIONS:
+                self.bandwidth.check_review(pending["bandwidth_token"], actor)
             # No write occurs until every target, lease, route and pause state passes.
             try:
                 for target in pending["targets"]:
@@ -314,7 +357,7 @@ class ActionControl:
                         raise ControlError("A reviewed device IP changed; no reservation was created.")
                     self.routes.apply_reservation(preview["token"])
                     completed_reservations.append(target)
-                if pending["action"] == "pause":
+                if pending["action"] == "pause" or pending["action"] in BANDWIDTH_ACTIONS:
                     self._ensure_pause_objects(pending["targets"])
                 result = self._apply_action(pending)
             except Exception as exc:
@@ -322,9 +365,9 @@ class ActionControl:
                     self._audit_partial(pending, completed_reservations, exc)
                     raise ControlError(f"Action stopped after {len(completed_reservations)} DHCP reservation(s) were created; "
                                        f"those reservations remain active. {type(exc).__name__}: {exc}") from exc
-                if pending["action"] == "pause":
+                if pending["action"] == "pause" or pending["action"] in BANDWIDTH_ACTIONS:
                     self._audit_partial(pending, [], exc)
-                    raise ControlError(f"Combined pause stopped before completion. Managed address objects may remain; "
+                    raise ControlError(f"Device action stopped before completion. Managed address objects may remain; "
                                        f"inspect the device state before retrying. {type(exc).__name__}: {exc}") from exc
                 raise
         return result
@@ -387,7 +430,7 @@ class ActionControl:
                 if target["reservation_needed"]:
                     candidate["reservations"].append({"mac": mac, "ip": target["ip"], "enable": "on"})
                 self._check_pause_objects_candidate(mac, target["ip"], candidate, pending["management_ip"])
-            elif pending["action"] in ACTION_ROUTES:
+            elif pending["action"] in ACTION_ROUTES or pending["action"] in BANDWIDTH_ACTIONS:
                 self._check_management_target(mac, target["ip"], pending["management_ip"])
         if pending["action"] in ("pause", "resume"):
             self.pause._acl_check(pause_snap["acls"], self.pause.store.list())
@@ -429,7 +472,23 @@ class ActionControl:
                         raise ControlError("The ER605 did not verify the reviewed device group.")
 
     def _apply_action(self, pending):
+        if pending["action"] in BANDWIDTH_ACTIONS:
+            result = self.bandwidth.apply(
+                pending["bandwidth_token"], pending["actor"],
+                check_unchanged=lambda: self._check_group(pending["group"]))
+            if result.get("count") != len(pending["targets"]):
+                raise ControlError("The bandwidth action returned an incomplete device count; inspect recovery state.")
+            return {**result, "action": pending["action"]}
         action = pending["action"]
+        route = pending["route"]
+        if route is not None and not self.routes.route_transaction.owns_current_thread:
+            strict = route.endswith("_ONLY") or any(
+                str(target.get("current", "")).endswith("_ONLY") for target in pending["targets"])
+            if strict:
+                return self.routes.run_route_transaction(
+                    [target["mac"] for target in pending["targets"]], route, pending["actor"],
+                    lambda: self._apply_action(pending),
+                    previous=[target["current"] for target in pending["targets"]])
         if action in ACTION_ROUTES:
             route = ACTION_ROUTES[action]
             group = pending["group"]

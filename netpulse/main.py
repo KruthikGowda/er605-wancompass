@@ -48,6 +48,7 @@ from netpulse.router.pause import PauseControl
 from netpulse.router.actions import ActionControl
 from netpulse.devices.group_control import GroupControl
 from netpulse.router.traffic import DeviceTraffic
+from netpulse.router.bandwidth import BandwidthControl
 from netpulse.router.watch import RouterEvent, RouterWatch
 from netpulse.router.syslog import DhcpAllocation, RouterSyslogProtocol
 from netpulse.speedtest import SpeedResult, SpeedTester
@@ -131,7 +132,13 @@ class Monitor:
             enabled=cfg.router.internet_controls_enabled,
             protected_macs=cfg.router.protected_macs,
         ) if self.router_control else None)
-        self.action_control = ActionControl(self.router_control, self.pause_control) if self.router_control else None
+        self.bandwidth_control = (BandwidthControl(
+            self.router_control, cfg.db_path, enabled=cfg.router.bandwidth_controls_enabled)
+            if self.router_control else None)
+        if self.router_control:
+            self.router_control.bandwidth_control = self.bandwidth_control
+        self.action_control = (ActionControl(self.router_control, self.pause_control, self.bandwidth_control)
+                               if self.router_control else None)
         self.group_control = GroupControl(cfg.db_path, lambda: self.bot_handlers()["quick_choices"]())
         self.device_traffic = DeviceTraffic(router) if router else None
         self.baselines = Baselines(storage.load_baselines())
@@ -1021,6 +1028,25 @@ class Monitor:
         log.info("weekly report queued for Sunday %s", slot)
         self.alerter.notifier.send(self.weekly_digest(now, title))
 
+    def maintain_router_controls(self, now: float) -> int:
+        if self.router_control is None:
+            return 0
+        route_pending = self.router_control.route_transaction.pending_count
+        cap_pending = self.bandwidth_control.pending_count if self.bandwidth_control else 0
+        if route_pending or cap_pending:
+            snap = getattr(self.router, "snap", None)
+            if not getattr(snap, "ok", False):
+                return 0
+            refresh = getattr(self.router, "refresh_uptime", None)
+            if callable(refresh) and not refresh():
+                return 0
+            self.router_control.recover_pending_routes()
+            if self.bandwidth_control:
+                outcome = self.bandwidth_control.recover_pending()
+                if outcome.get("pending"):
+                    raise ControlError("Bandwidth recovery remains unresolved; new controls stay locked.")
+        return self.router_control.expire_due_routes(now)
+
     def bot_handlers(self) -> dict:
         def quick_choices():
             control = self.action_control
@@ -1123,10 +1149,22 @@ class Monitor:
                     lines.append(report["reason"])
             else:
                 lines.append("Device traffic measurements are unavailable until the router is configured and fresh.")
-            lines.extend(["WAN speed tests measure a shared connection, not a device's current speed.",
-                          "Per-device bandwidth caps and traffic priority are unavailable until the firmware's rule interface is verified. "
-                          "WAN preference selects a connection; it does not reserve bandwidth or set traffic priority."])
-            return {"text": "\n".join(lines), "actions": []}
+            caps = self.bandwidth_control.records() if self.bandwidth_control else []
+            for cap in caps:
+                if cap["mac"] in macs:
+                    lines.append(f"Saved WAN2 limit: download {cap['down_kbps'] / 1000:g} Mbps · "
+                                 f"upload {cap['up_kbps'] / 1000:g} Mbps")
+            options = getattr(self.action_control, "bandwidth_options", None)
+            controls = options() if callable(options) else []
+            lines.append("WAN speed tests measure a shared connection, not a device's current speed.")
+            if any(option.get("enabled") for option in controls):
+                lines.append("Limits here apply per device on WAN2. Other WANs are not limited. "
+                             "Traffic-priority controls are awaiting separate validation.")
+            else:
+                lines.append("Per-device bandwidth caps and traffic priority are unavailable until their router safety checks pass.")
+            lines.append("WAN preference selects a connection; it does not reserve bandwidth or set traffic priority.")
+            return {"text": "\n".join(lines), "actions": [],
+                    "control_options": controls}
 
         def quick_preview(payload, chat):
             if self.action_control is None:
@@ -2600,12 +2638,16 @@ async def run_async(cfg: Config) -> None:
                     for failure in mon.router_control.drain_expiry_failures():
                         mon.on_route_expiry_failure(now, failure)
                 except Exception:  # noqa: BLE001
-                    log.exception("timed route expiry worker failed")
+                    log.exception("router recovery or timed route expiry worker failed")
+                    if mon.router_control.state().get("recovery_pending"):
+                        mon._system_alert(now,
+                            "⚠️ A saved router change needs recovery. New controls stay locked until it is verified.",
+                            "Router control recovery needs attention", "router-control-recovery")
                 route_expiry_task = None
             if mon.router_control and route_expiry_task is None and now >= next_route_expiry_tick:
                 next_route_expiry_tick = now + 60
                 route_expiry_task = asyncio.create_task(asyncio.to_thread(
-                    mon.router_control.expire_due_routes, now))
+                    mon.maintain_router_controls, now))
 
             if pause_expiry_task and pause_expiry_task.done():
                 try:

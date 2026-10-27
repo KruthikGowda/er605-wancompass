@@ -47,7 +47,7 @@ class Element {
   append(...children) { this.children.push(...children); }
   addEventListener(name, callback) { this.handlers[name]=callback; }
 }
-const ids = ['quick-action-choice','quick-action-duration-label','quick-action-duration',
+const ids = ['quick-action-choice','quick-action-category','quick-action-category-label','quick-action-duration-label','quick-action-duration',
   'quick-action-count','quick-action-status','quick-action-capability','quick-action-clear',
   'quick-action-review','device-traffic-load','device-traffic-status','device-traffic-results'];
 const elements = Object.fromEntries(ids.map(id => [id,new Element()]));

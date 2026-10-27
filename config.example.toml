@@ -83,6 +83,7 @@ credentials_file = "/etc/netpulse/router.toml"
 controls_enabled = false     # unlock manual per-device route changes only when the pilot is ready
 internet_controls_enabled = false # stays off until separately routed IPv4 pause validation is complete
 strict_wan_controls_enabled = false # staged: mode-transition forwarding and recovery are not verified
+bandwidth_controls_enabled = false # reviewed WAN2 IPv4 caps; requires verified apply and recovery
 protected_macs = []          # optional additional devices that must never be paused
 kill_switch = "/etc/netpulse/controls.disabled"  # create this file to block all router writes
 presence_probes_enabled = false  # optional LAN pings; no reply is not proof a device is offline

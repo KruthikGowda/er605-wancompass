@@ -20,6 +20,8 @@ from netpulse.freshness import age_seconds
 from netpulse.storage import sqlite
 from netpulse.storage.sqlite import KeyValueFile
 from netpulse.storage.pauses import blocked_macs
+from netpulse.storage.route_intents import RouteIntentStore
+from netpulse.router.route_transaction import RouteTransaction, RouteTransactionError
 
 log = logging.getLogger(__name__)
 
@@ -161,6 +163,8 @@ class RouterControl:
         self._expiry_audited: set[str] = set()
         self._expiry_queue_lock = threading.Lock()
         self._expiry_failures: list[dict] = []
+        self.route_transaction = RouteTransaction(self, RouteIntentStore(db_path))
+        self.bandwidth_control = None
 
     def drain_expiry_failures(self) -> list[dict]:
         """Return newly failed timed expiries for owner notification."""
@@ -202,14 +206,28 @@ class RouterControl:
         fresh = age is not None and age <= max(MAX_ROUTER_AGE_SECONDS, self.router.poll_seconds * 2)
         uptime_fresh = (uptime_age is not None and uptime_age <= MAX_UPTIME_SAMPLE_AGE_SECONDS)
         settled = self.router.snap.uptime is not None and self.router.snap.uptime >= ROUTER_SETTLE_SECONDS
+        recovery_pending = False
+        recovery_count = 0
+        try:
+            recovery_count = self.route_transaction.pending_count
+            recovery_pending = bool(recovery_count and not self.route_transaction.owns_current_thread)
+            bandwidth = self.bandwidth_control
+            if bandwidth is not None:
+                count = bandwidth.pending_count
+                recovery_count += count
+                recovery_pending |= bool(count and not bandwidth.owns_current_thread)
+        except Exception:
+            recovery_pending = True
         ready = bool(self.enabled and not killed and not acl_recovery_failed and not firmware_review_required and fresh and load_balancing is True
-                     and uptime_fresh and settled)
+                     and uptime_fresh and settled and not recovery_pending)
         if killed:
             reason = "The local control kill switch is active."
         elif not self.enabled:
             reason = "Router controls are disabled in config."
         elif acl_recovery_failed:
             reason = "An interrupted temporary Internet test needs cleanup; verify the Pi recovery service before changing router controls."
+        elif recovery_pending:
+            reason = "An unfinished router change needs verified recovery before new controls can run."
         elif firmware_review_required:
             reason = firmware_reason
         elif not fresh:
@@ -237,6 +255,7 @@ class RouterControl:
         strict_wan_available = not strict_wan_reason
         return {"enabled": ready, "configured": self.enabled, "kill_switch": killed,
                 "acl_recovery_failed": acl_recovery_failed,
+                "recovery_pending": recovery_pending, "recovery_count": recovery_count,
                 "load_balancing": load_balancing, "reason": reason,
                 "firmware_version": firmware_version,
                 "accepted_firmware_version": accepted_firmware,
@@ -455,7 +474,14 @@ class RouterControl:
 
     def apply_group(self, token: str) -> dict:
         with self._router_write_lock:
-            return self._apply_group_locked(token)
+            with self._lock:
+                pending = self._pending_groups.get(str(token or ""))
+            if not pending or pending["expires"] <= time.time():
+                return self._apply_group_locked(token)
+            return self.run_route_transaction(
+                [member["mac"] for member in pending["members"]], pending["route"], pending["actor"],
+                lambda: self._apply_group_locked(token),
+                previous=[member["current"] for member in pending["members"]])
 
     def _apply_group_locked(self, token: str) -> dict:
         """Apply one group change; if any member fails, restore prior member preferences in reverse order."""
@@ -1062,7 +1088,31 @@ class RouterControl:
 
     def apply(self, token: str) -> dict:
         with self._router_write_lock:
-            return self._apply_one(token)
+            with self._lock:
+                pending = self._pending.get(str(token or ""))
+            if not pending or pending["expires"] <= time.time():
+                return self._apply_one(token)
+            return self.run_route_transaction(
+                [pending["mac"]], pending["route"], pending["actor"], lambda: self._apply_one(token),
+                previous=[pending["observed_current"]])
+
+    def run_route_transaction(self, macs, route, actor, work, previous=()):
+        coordinator = self.route_transaction
+        strict = route in STRICT_ROUTES or any(item in STRICT_ROUTES for item in previous)
+        if coordinator.owns_current_thread or strict:
+            try:
+                return coordinator.run(macs, route, actor, work)
+            except RouteTransactionError as exc:
+                raise ControlError(str(exc)) from None
+        if coordinator.pending_count:
+            raise ControlError("An unfinished route change must recover before another action.")
+        return work()
+
+    def recover_pending_routes(self):
+        try:
+            return self.route_transaction.recover_pending()
+        except RouteTransactionError as exc:
+            raise ControlError(str(exc)) from None
 
     def _apply_one(self, token: str) -> dict:
         with self._lock:
@@ -1252,6 +1302,37 @@ class RouterControl:
                 "route_expires_at": route_expires_at,
                 "expiry_label": ROUTE_EXPIRY_OPTIONS[pending["expiry_seconds"]]}
 
+    def _expire_saved_preference(self, saved, now):
+        mac = saved["mac"]
+        route_name = f"NP_R_{mac.replace('-', '')}"
+        group_name = f"NP_G_{mac.replace('-', '')}"
+        self._assert_enabled()
+        with self.client.session() as c:
+            if _balance_enabled(c.get("balance", "balance_basic")) is not True:
+                raise ControlError("live load balancing is not confirmed")
+            routes = c.get("policy_route", "policy_route") or []
+            matches = [(i, r) for i, r in enumerate(routes) if isinstance(r, dict)
+                       and r.get("name") == route_name]
+            if len(matches) > 1:
+                raise ControlError("multiple NetPulse rules are present")
+            if matches:
+                _, row = matches[0]
+                expected_interface = saved["route"].removesuffix("_ONLY")
+                expected_mode = "Only" if saved["route"] in STRICT_ROUTES else "Priority"
+                if (row.get("src_ipgroup") != group_name or row.get("dst_ipgroup") != "IPGROUP_ANY"
+                        or row.get("mode") != expected_mode):
+                    raise ControlError("policy row no longer matches the saved NetPulse preference")
+                if row.get("state") != "off":
+                    if row.get("interfaces") != expected_interface:
+                        raise ControlError("policy WAN differs from the saved preference; refusing overwrite")
+                    self._update("policy_route", "policy_route", routes, route_name, ROUTE_FIELDS,
+                                 {"state": "off"})
+        detail = ("Timed strict Only route expired and was removed; normal ER605 routing restored."
+                  if saved["route"] in STRICT_ROUTES else
+                  "Timed preference expired; normal ER605 load balancing restored.")
+        sqlite.set_device_route(self.db_path, mac, saved["ip"], "AUTO", int(now),
+                                "system expiry", saved["route"], "applied", detail)
+
     def expire_due_routes(self, now: float | None = None,
                           monotonic_now: float | None = None) -> int:
         with self._router_write_lock:
@@ -1291,32 +1372,9 @@ class RouterControl:
                 route_name = f"NP_R_{mac.replace('-', '')}"
                 group_name = f"NP_G_{mac.replace('-', '')}"
                 try:
-                    self._assert_enabled()
-                    with self.client.session() as c:
-                        if _balance_enabled(c.get("balance", "balance_basic")) is not True:
-                            raise ControlError("live load balancing is not confirmed")
-                        routes = c.get("policy_route", "policy_route") or []
-                        matches = [(i, r) for i, r in enumerate(routes) if isinstance(r, dict)
-                                   and r.get("name") == route_name]
-                        if len(matches) > 1:
-                            raise ControlError("multiple NetPulse rules are present")
-                        if matches:
-                            _, row = matches[0]
-                            expected_interface = saved["route"].removesuffix("_ONLY")
-                            expected_mode = "Only" if saved["route"] in STRICT_ROUTES else "Priority"
-                            if (row.get("src_ipgroup") != group_name or row.get("dst_ipgroup") != "IPGROUP_ANY"
-                                    or row.get("mode") != expected_mode):
-                                raise ControlError("policy row no longer matches the saved NetPulse preference")
-                            if row.get("state") != "off":
-                                if row.get("interfaces") != expected_interface:
-                                    raise ControlError("policy WAN differs from the saved preference; refusing overwrite")
-                                self._update("policy_route", "policy_route", routes, route_name, ROUTE_FIELDS,
-                                             {"state": "off"})
-                    detail = ("Timed strict Only route expired and was removed; normal ER605 routing restored."
-                              if saved["route"] in STRICT_ROUTES else
-                              "Timed preference expired; normal ER605 load balancing restored.")
-                    sqlite.set_device_route(self.db_path, mac, saved["ip"], "AUTO", int(now),
-                                            "system expiry", saved["route"], "applied", detail)
+                    self.run_route_transaction(
+                        [mac], "AUTO", "system expiry", lambda: self._expire_saved_preference(saved, now),
+                        previous=[saved["route"]])
                     self._expiry_retry_after.pop(mac, None)
                     self._expiry_audited.discard(mac)
                     completed += 1

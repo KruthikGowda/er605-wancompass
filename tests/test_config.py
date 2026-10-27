@@ -8,6 +8,14 @@ EXAMPLE = Path(__file__).resolve().parent.parent / "config.example.toml"
 
 
 class LoadConfig(unittest.TestCase):
+    def test_bandwidth_controls_default_off_and_require_a_boolean(self):
+        raw = tomllib.loads(EXAMPLE.read_text(encoding="utf-8"))
+        self.assertFalse(config.parse(raw).router.bandwidth_controls_enabled)
+        for value in ("true", 1, [], None):
+            raw["router"]["bandwidth_controls_enabled"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "bandwidth_controls_enabled"):
+                config.parse(raw)
+
     def test_example_config_is_valid(self):
         cfg = config.load(EXAMPLE)
         self.assertEqual([w.name for w in cfg.wans], ["WAN1", "WAN2"])
