@@ -37,7 +37,9 @@ MAX_CHOICES = 512
 MAX_SELECTED = 128
 MAX_SESSIONS = 32
 MAX_TEXT = 3900
+MAX_BANDWIDTH_CONTROLS = 16
 _NUMBER_SELECTION = re.compile(r"\s*\d+(?:\s*,\s*\d+)*\s*\Z")
+_BANDWIDTH_ID = re.compile(r"[A-Za-z0-9_]{1,48}\Z")
 PAUSE_DURATIONS = (("15 minutes", 900), ("1 hour", 3600),
                    ("6 hours", 21600), ("Until resumed", 0))
 
@@ -92,6 +94,8 @@ class _Session:
     review_kind: str = "router"
     review_payload: dict | None = None
     duration_seconds: int | None = None
+    bandwidth_controls: list[dict] | None = None
+    bandwidth_control_state: dict | None = None
 
 
 class QuickPicker:
@@ -174,6 +178,15 @@ class QuickPicker:
             session.phase = "list"
             session.revision += 1
             return self._list_view(session)
+        if session.phase == "bandwidth":
+            if not self.is_selection(text) or "," in text:
+                return "Reply with one displayed number to review that control.", self._bandwidth_markup(session)
+            number = int(text)
+            controls = session.bandwidth_controls or []
+            enabled = [control for control in controls if control["enabled"]]
+            if number < 1 or number > len(enabled):
+                return "Choose one of the enabled controls shown. No change was made.", self._bandwidth_markup(session)
+            return self._select_bandwidth_control(session, enabled[number - 1])
         if session.phase != "list" or not self.is_selection(text):
             return None
         try:
@@ -265,14 +278,27 @@ class QuickPicker:
                 session.phase = "action"
                 return self._actions_view(session)
             return "Choose one of the listed pause durations.", self._duration_markup(session)
+        if session.phase == "bandwidth" and verb == "bandwidth":
+            controls = session.bandwidth_controls or []
+            enabled = [control for control in controls if control["enabled"]]
+            if 0 <= index < len(enabled):
+                return self._select_bandwidth_control(session, enabled[index])
+            return "That control is no longer available.", self._bandwidth_markup(session)
         if session.phase == "review" and verb == "confirm":
             return self._confirm(session)
         if session.phase == "review" and verb == "back":
+            if session.review_kind == "router" and session.bandwidth_control_state:
+                session.review = None
+                session.review_payload = None
+                session.bandwidth_control_state = None
+                return self._bandwidth_view(session)
             session.duration_seconds = None
             session.action = None
             session.phase = "list" if session.purpose in {"group_members", "create_group", "device_members"} else "action"
             return self._list_view(session) if session.phase == "list" else self._actions_view(session)
-        if session.phase == "info" and verb == "back":
+        if session.phase in {"info", "bandwidth"} and verb == "back":
+            session.bandwidth_control_state = None
+            session.bandwidth_controls = None
             session.phase = "action"
             return self._actions_view(session)
         if session.phase in {"action", "review"} and verb == "back":
@@ -281,7 +307,7 @@ class QuickPicker:
 
     @staticmethod
     def _parse_data(data: str) -> tuple[str, int, str, int] | None:
-        match = re.fullmatch(r"qp:([A-Za-z0-9_-]{6,16}):(\d+):(item|page|next|action|duration|back|confirm|cancel|create):(\d+|m)", data)
+        match = re.fullmatch(r"qp:([A-Za-z0-9_-]{6,16}):(\d+):(item|page|next|action|duration|bandwidth|back|confirm|cancel|create):(\d+|m)", data)
         if not match:
             return None
         nonce, revision, verb, raw_index = match.groups()
@@ -471,6 +497,8 @@ class QuickPicker:
         return {"inline_keyboard": rows}
 
     def _after_selection(self, session: _Session) -> tuple[str, dict]:
+        session.bandwidth_controls = None
+        session.bandwidth_control_state = None
         if session.kind == "groups" and session.purpose == "router":
             if len(session.selected) != 1:
                 return "Choose one group at a time.", self._list_markup(session)
@@ -624,34 +652,123 @@ class QuickPicker:
         return True, ""
 
     def _bandwidth_view(self, session: _Session) -> tuple[str, dict]:
-        payload = {"items": [session.choices[i] for i in session.selected]}
-        if self._bandwidth:
-            try:
-                result = self._bandwidth(payload, session.chat)
-            except Exception:
-                result = None
-        else:
-            result = None
+        result = self._read_bandwidth(session)
         lines = [str(result.get("text") or "") if isinstance(result, dict) else
                  "Device bandwidth and priority options are unavailable from the verified router controls."]
+        # Keep the established read-only text contract for rates/options.
         options = (result.get("options", result.get("actions", []))
                    if isinstance(result, dict) else [])
-        for option in options:
-            if isinstance(option, str):
-                lines.append(f"• {_single_line(option, 140)}")
-            elif isinstance(option, dict):
-                label = _single_line(option.get("label") or option.get("id"), 100)
-                if not option.get("enabled", True):
-                    label += " — unavailable: " + _single_line(option.get("reason") or "not verified", 100)
-                lines.append(f"• {label}")
-        session.phase = "info"
+        if isinstance(options, list):
+            for option in options:
+                if isinstance(option, str):
+                    lines.append(f"• {_single_line(option, 140)}")
+                elif isinstance(option, dict):
+                    label = _single_line(option.get("label") or option.get("id"), 100)
+                    if not option.get("enabled", True):
+                        label += " — unavailable: " + _single_line(option.get("reason") or "not verified", 100)
+                    lines.append(f"• {label}")
+        controls, malformed = self._validated_bandwidth_controls(result)
+        session.bandwidth_controls = controls
+        session.bandwidth_control_state = None
+        session.phase = "bandwidth" if controls else "info"
         session.revision += 1
-        return _bounded_text("\n".join(line for line in lines if line)), {
-            "inline_keyboard": [[{"text": "‹ Back", "callback_data": self._data(session, "back", 0)},
-                                 {"text": "Cancel", "callback_data": self._data(session, "cancel", 0)}]]}
+        if malformed:
+            lines.append("Verified controls are unavailable because the control list was invalid.")
+        elif controls:
+            lines.append("\nControls to review:")
+            enabled_index = 0
+            for control in controls:
+                if control["enabled"]:
+                    enabled_index += 1
+                    lines.append(f"{enabled_index}. {control['label']}")
+                else:
+                    label = control["label"]
+                    reason = control.get("reason") or "not available"
+                    lines.append(f"• {label} — unavailable: {reason}")
+            lines.append("Reply with one number or tap a control to review it.")
+        return _bounded_text("\n".join(line for line in lines if line)), self._bandwidth_markup(session)
+
+    def _read_bandwidth(self, session: _Session) -> dict | None:
+        if not self._bandwidth:
+            return None
+        payload = {"items": [session.choices[i] for i in session.selected]}
+        try:
+            result = self._bandwidth(payload, session.chat)
+            return result if isinstance(result, dict) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _validated_bandwidth_controls(result: dict | None) -> tuple[list[dict], bool]:
+        if not isinstance(result, dict) or "control_options" not in result:
+            return [], False
+        raw = result.get("control_options")
+        if not isinstance(raw, list) or len(raw) > MAX_BANDWIDTH_CONTROLS:
+            return [], True
+        controls = []
+        seen = set()
+        for option in raw:
+            if not isinstance(option, dict):
+                return [], True
+            identity, label = option.get("id"), option.get("label")
+            enabled = option.get("enabled", True)
+            reason = option.get("reason")
+            if (not isinstance(identity, str) or not _BANDWIDTH_ID.fullmatch(identity) or
+                    identity in seen or not isinstance(label, str) or not label or
+                    len(label) > 72 or label != label.strip() or
+                    any(ord(char) < 32 or ord(char) == 127 for char in label) or
+                    not isinstance(enabled, bool) or
+                    (reason is not None and (not isinstance(reason, str) or len(reason) > 72 or
+                                             any(ord(char) < 32 or ord(char) == 127 for char in reason)))):
+                return [], True
+            seen.add(identity)
+            control = {"id": identity, "label": label, "enabled": enabled}
+            if reason is not None:
+                control["reason"] = reason
+            controls.append(control)
+        return controls, False
+
+    def _bandwidth_markup(self, session: _Session) -> dict:
+        if session.phase != "bandwidth" or not session.bandwidth_controls:
+            return {"inline_keyboard": [[
+                {"text": "‹ Back", "callback_data": self._data(session, "back", 0)},
+                {"text": "Cancel", "callback_data": self._data(session, "cancel", 0)}]]}
+        enabled = [control for control in session.bandwidth_controls if control["enabled"]]
+        rows = []
+        for start in range(0, len(enabled), 2):
+            rows.append([{"text": control["label"],
+                          "callback_data": self._data(session, "bandwidth", start + offset)}
+                         for offset, control in enumerate(enabled[start:start + 2])])
+        rows.append([{"text": "‹ Back", "callback_data": self._data(session, "back", 0)},
+                     {"text": "Cancel", "callback_data": self._data(session, "cancel", 0)}])
+        return {"inline_keyboard": rows}
+
+    def _select_bandwidth_control(self, session: _Session, control: dict) -> tuple[str, dict]:
+        result = self._read_bandwidth(session)
+        fresh, malformed = self._validated_bandwidth_controls(result)
+        match = next((item for item in fresh if item["id"] == control["id"]), None)
+        session.bandwidth_controls = fresh
+        if malformed or not match or not match["enabled"] or match["label"] != control["label"]:
+            session.bandwidth_control_state = None
+            session.phase = "bandwidth" if fresh else "info"
+            session.revision += 1
+            text = "That control changed or is no longer available. Review the refreshed options; nothing changed."
+            return text, self._bandwidth_markup(session)
+        session.bandwidth_control_state = {"id": match["id"], "label": match["label"]}
+        return self._review_view(session, match["id"])
+
+    def _bandwidth_control_matches(self, session: _Session) -> bool:
+        state = session.bandwidth_control_state
+        if not state:
+            return True
+        fresh, malformed = self._validated_bandwidth_controls(self._read_bandwidth(session))
+        return (not malformed and any(item["id"] == state["id"] and item["label"] == state["label"]
+                                      and item["enabled"] for item in fresh))
 
     def _back_to_list(self, session: _Session) -> tuple[str, dict]:
         session.duration_seconds = None
+        session.bandwidth_controls = None
+        session.bandwidth_control_state = None
         if session.purpose == "group_members" and session.group_target:
             groups = self._read_choices("groups")
             session.kind = "groups"
@@ -707,11 +824,17 @@ class QuickPicker:
         return {"inline_keyboard": [buttons[:2], buttons[2:], controls]}
 
     def _review_view(self, session: _Session, action: str) -> tuple[str, dict]:
+        if session.bandwidth_control_state and not self._bandwidth_control_matches(session):
+            session.bandwidth_control_state = None
+            text, markup = self._bandwidth_view(session)
+            return "That control changed before review. Refresh the options; nothing changed.\n\n" + text, markup
         fresh = self._read_choices(session.kind)
         if not self._same_selection(session, fresh):
             session.choices = fresh
             session.selected = []
             session.duration_seconds = None
+            session.bandwidth_controls = None
+            session.bandwidth_control_state = None
             session.phase = "list"
             session.revision += 1
             return "The inventory changed. Choose the devices or groups again.", self._list_markup(session)
@@ -726,6 +849,8 @@ class QuickPicker:
             review = {"text": "Could not prepare a fresh review. Nothing changed."}
         if not isinstance(review, dict) or not review.get("confirm_token"):
             session.review = None
+            session.bandwidth_controls = None
+            session.bandwidth_control_state = None
             session.phase = "action"
             return _bounded_text(review.get("text", "This action is unavailable. Nothing changed.") if isinstance(review, dict) else "This action is unavailable. Nothing changed."), self._actions_markup(session)
         session.review = review
@@ -745,10 +870,19 @@ class QuickPicker:
             except Exception:
                 fresh = None
         else:
+            if session.bandwidth_control_state and not self._bandwidth_control_matches(session):
+                session.review = None
+                session.review_payload = None
+                session.review_signature = None
+                session.bandwidth_control_state = None
+                text, markup = self._bandwidth_view(session)
+                return "That control changed since review. Review the refreshed options; nothing changed.\n\n" + text, markup
             fresh_choices = self._read_choices(session.kind)
             if not self._same_selection(session, fresh_choices):
                 session.choices = fresh_choices
                 session.selected = []
+                session.bandwidth_controls = None
+                session.bandwidth_control_state = None
                 session.phase = "list"
                 session.revision += 1
                 return "The inventory changed since review. Choose again; nothing changed.", self._list_markup(session)

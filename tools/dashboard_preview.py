@@ -20,6 +20,8 @@ from urllib.parse import parse_qs, urlparse
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CAP_PRESETS = {f"bandwidth_wan2_{rate}m": rate for rate in (2, 5, 10, 25, 50)}
+CAP_PRESETS["bandwidth_wan2_remove"] = None
 INDEX = ROOT / "netpulse" / "web" / "static" / "index.html"
 DEMO_BANNER = (
     '<div role="status" aria-label="Local demo preview" '
@@ -136,7 +138,11 @@ def fixture_data(now: float | None = None) -> dict[str, dict]:
                               {"id": "resume", "label": "Resume Internet", "enabled": True},
                               {"id": "only_wan1", "label": "Only Demo Fiber · no fallback", "enabled": True},
                               {"id": "only_wan2", "label": "Only Demo Backup · no fallback", "enabled": True},
-                          ]},
+                          ],
+                          "bandwidth_options": [
+                              {"id": action, "label": f"WAN 2 · {rate} Mbps per device" if rate else "Remove WAN 2 limits",
+                               "enabled": True} for action, rate in CAP_PRESETS.items()],
+                          "bandwidth_caps": []},
         "/api/control": {"enabled": True, "reason": "Demo controls shown for layout review; all writes are denied."},
         "/api/device-groups": {"groups": groups},
         "/api/system": {"enabled": True, "health": {
@@ -162,7 +168,7 @@ def action_preview_fixture(payload: object, fixture: dict[str, dict]) -> dict:
         raise ValueError("Request must be a JSON object.")
     action = payload.get("action")
     if not isinstance(action, str) or action not in {
-            "auto", "prefer_wan1", "prefer_wan2", "pause", "resume", "only_wan1", "only_wan2"}:
+            "auto", "prefer_wan1", "prefer_wan2", "pause", "resume", "only_wan1", "only_wan2", *CAP_PRESETS}:
         raise ValueError("Choose a supported demo action.")
     has_macs, has_group = "macs" in payload, "group_id" in payload
     if has_macs == has_group:
@@ -171,7 +177,9 @@ def action_preview_fixture(payload: object, fixture: dict[str, dict]) -> dict:
     duration_seconds = payload.get("duration_seconds", 3600 if action == "pause" else 0)
     if isinstance(duration_seconds, bool) or not isinstance(duration_seconds, int):
         raise ValueError("Choose a valid demo duration.")
-    if action in ("pause", "resume"):
+    if action in CAP_PRESETS:
+        allowed_durations = {0}
+    elif action in ("pause", "resume"):
         allowed_durations = {0, 900, 3600, 21600}
     else:
         allowed_durations = {0, 3600, 21600, 86400, 604800}
@@ -229,7 +237,12 @@ def action_preview_fixture(payload: object, fixture: dict[str, dict]) -> dict:
         })
 
     reservation_count = sum(target["reservation_needed"] for target in targets)
-    if action == "pause":
+    if action in CAP_PRESETS:
+        rate = CAP_PRESETS[action]
+        effect = (f"DEMO ONLY. Limit each selected device on WAN2 to {rate} Mbps download and upload. "
+                  "Other WANs are not limited. No router change will occur." if rate else
+                  "DEMO ONLY. Remove the selected WAN2 bandwidth limits. No router change will occur.")
+    elif action == "pause":
         duration_name = {0: "until resumed", 900: "15 minutes", 3600: "1 hour", 21600: "6 hours"}[duration_seconds]
         effect = (f"DEMO ONLY. Pause the IPv4 Internet path for {duration_name}; IPv6 and LAN protection are not validated. "
                   "No router change will occur.")

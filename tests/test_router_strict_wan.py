@@ -52,6 +52,7 @@ class StrictWanControls(unittest.TestCase):
         self.db = str(Path(temp.name) / "strict.db")
         Storage(self.db).close()
         self.client = FakeControlClient()
+        self.client.forms[('dhcps', 'client')] = [{'macaddr': MAC, 'ipaddr': IP}]
         now = time.time()
         self.router = SimpleNamespace(client=self.client, api_lock=threading.RLock(), poll_seconds=60,
             snap=SimpleNamespace(checked_at=now, uptime_at=now, uptime=1000,
@@ -63,6 +64,8 @@ class StrictWanControls(unittest.TestCase):
             kill_switch=str(Path(temp.name) / "disabled"), strict_wan_enabled=True)
         self.control.is_local_device = lambda _mac: False
         self.control._refresh_transaction_uptime = lambda: None
+        self.control.route_transaction.sleep = lambda _seconds: None
+        self.control._boot_id = "strict-tests"
 
     def test_only_mode_is_distinct_and_unknown_modes_are_not_inferred(self):
         raw = {"policy_routes": [{"name": "NP_R_AABBCCDDEE01", "state": "on",
@@ -136,11 +139,12 @@ class StrictWanControls(unittest.TestCase):
                 return super().add_row(module, form, rows, new)
 
         self.client = WrongModeClient()
+        self.client.forms[('dhcps', 'client')] = [{'macaddr': MAC, 'ipaddr': IP}]
         self.router.client = self.client
         self.control.client = self.client
         self.router.snap.raw["reservations"] = deepcopy(self.client.forms[("dhcps", "reservation")])
         preview = self.control.preview(MAC, "WAN1_ONLY", "owner")
-        with self.assertRaisesRegex(RouterError, "requested WAN route mode"):
+        with self.assertRaisesRegex(ControlError, "restored and verified"):
             self.control.apply(preview["token"])
         self.assertEqual(sqlite.device_routes(self.db), {})
         self.assertEqual(self.client.forms[("policy_route", "policy_route")], [])
@@ -148,7 +152,8 @@ class StrictWanControls(unittest.TestCase):
     def test_timed_strict_route_expires_to_auto_even_if_feature_flag_is_off(self):
         self.client.forms[("policy_route", "policy_route")] = [{
             "name": "NP_R_AABBCCDDEE01", "src_ipgroup": GROUP_NAME, "dst_ipgroup": "IPGROUP_ANY",
-            "interfaces": "WAN2", "mode": "Only", "state": "on", "index": 1}]
+            "interfaces": "WAN2", "mode": "Only", "state": "on", "index": 1,
+            "service_type": "ALL", "timeobj": "Any", "comment": "NetPulse", "src": "ipgroup", "dst": "ipgroup"}]
         now = int(time.time())
         sqlite.set_device_route(self.db, MAC, IP, "WAN2_ONLY", now - 100, "owner", "AUTO", "applied",
                                 "strict timed route", expires_at=now - 1,
@@ -175,6 +180,9 @@ class StrictWanControls(unittest.TestCase):
             routes.append({"name": f"NP_R_{suffix}", "src_ipgroup": f"NP_G_{suffix}",
                            "dst_ipgroup": "IPGROUP_ANY", "interfaces": "WAN1", "mode": "Only",
                            "state": "on", "index": index})
+        for row in routes:
+            row.update(service_type='ALL', timeobj='Any', comment='NetPulse', src='ipgroup', dst='ipgroup')
+        temp_client.forms[('dhcps', 'client')] = [{'macaddr': item['mac'], 'ipaddr': item['ip']} for item in reservations]
         temp_client.forms[("policy_route", "policy_route")] = deepcopy(routes)
         temp_client.fail_name = f"NP_R_{MAC_B.replace('-', '')}"
         self.router.client = temp_client
@@ -211,6 +219,9 @@ class StrictWanControls(unittest.TestCase):
             rows.append({"name": f"NP_R_{suffix}", "src_ipgroup": f"NP_G_{suffix}",
                          "dst_ipgroup": "IPGROUP_ANY", "interfaces": "WAN1", "mode": "Only",
                          "state": "on", "index": index})
+        for row in rows:
+            row.update(service_type='ALL', timeobj='Any', comment='NetPulse', src='ipgroup', dst='ipgroup')
+        temp_client.forms[('dhcps', 'client')] = [{'macaddr': item['mac'], 'ipaddr': item['ip']} for item in reservations]
         temp_client.forms[("policy_route", "policy_route")] = deepcopy(rows)
         temp_client.fail_name = f"NP_R_{MAC_B.replace('-', '')}"
         self.router.client = temp_client
@@ -221,8 +232,9 @@ class StrictWanControls(unittest.TestCase):
             sqlite.set_device_route(self.db, mac, ip, "WAN1_ONLY", int(now), "owner", "AUTO", "applied")
         group = sqlite.save_device_group(self.db, "Work", [MAC, MAC_B], int(now))
         preview = self.control.preview_group(group["id"], "WAN2", "owner")
-        with self.assertRaisesRegex(ControlError, "Rollback failed for"):
+        with self.assertRaisesRegex(ControlError, "remains locked"):
             self.control.apply_group(preview["token"])
+        self.assertEqual(self.control.route_transaction.pending_count, 1)
         current = {row["name"]: (row["interfaces"], row["mode"])
                    for row in temp_client.forms[("policy_route", "policy_route")]}
         self.assertEqual(current[f"NP_R_{MAC.replace('-', '')}"], ("WAN2", "Priority"))
@@ -242,6 +254,9 @@ class StrictWanControls(unittest.TestCase):
                          "dst_ipgroup": "IPGROUP_ANY", "interfaces": "WAN1", "mode": "Only",
                          "state": "on", "index": index})
         temp_client.forms[("dhcps", "reservation")] = deepcopy(reservations)
+        for row in rows:
+            row.update(service_type='ALL', timeobj='Any', comment='NetPulse', src='ipgroup', dst='ipgroup')
+        temp_client.forms[('dhcps', 'client')] = [{'macaddr': item['mac'], 'ipaddr': item['ip']} for item in reservations]
         temp_client.forms[("policy_route", "policy_route")] = deepcopy(rows)
         temp_client.fail_name = f"NP_R_{MAC_B.replace('-', '')}"
         self.router.client = temp_client
@@ -255,7 +270,7 @@ class StrictWanControls(unittest.TestCase):
                                     boot_id=self.control._boot_id)
         actions = ActionControl(self.control)
         preview = actions.preview(macs=[MAC, MAC_B], action="prefer_wan2", actor="owner")
-        with self.assertRaisesRegex(ControlError, "completed device routes were restored and verified"):
+        with self.assertRaisesRegex(ControlError, "restored and verified"):
             actions.apply(preview["token"], "owner")
         self.assertTrue(all(row["mode"] == "Only" and row["interfaces"] == "WAN1"
                             for row in temp_client.forms[("policy_route", "policy_route")]))

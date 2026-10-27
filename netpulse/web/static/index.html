@@ -336,6 +336,7 @@
         <div class="quick-actions-head"><h3 class="quick-actions-title" id="quick-actions-title">Manage connections</h3><span id="quick-action-count" class="soft" aria-live="polite">No devices selected</span></div>
         <p class="quick-action-note" id="quick-action-status" role="status" aria-live="polite">Loading available actions…</p>
         <div class="quick-actions-controls">
+          <label id="quick-action-category-label" hidden>Control<select id="quick-action-category"><option value="connection">Connection and Internet</option><option value="bandwidth">Bandwidth · WAN 2</option></select></label>
           <label>Action<select id="quick-action-choice" aria-label="Action for selected devices" disabled></select></label>
           <label id="quick-action-duration-label">Duration<select id="quick-action-duration" aria-label="Action duration" disabled><option value="0">Until resumed</option><option value="3600" selected>1 hour</option><option value="900">15 minutes</option><option value="21600">6 hours</option></select></label>
           <button type="button" id="quick-action-clear" disabled>Clear selection</button>
@@ -643,6 +644,7 @@ const QUICK_ACTIONS = [
   ["only_wan2", "Only WAN 2 · no fallback"]
 ];
 let deviceTrafficScope = "", deviceTrafficRequestId = 0, deviceTrafficLoading = false;
+let quickActionBusy = false;
 function currentDeviceTrafficTarget() {
   if (actionTargetGroupId !== null) return {group_id: Number(actionTargetGroupId)};
   const macs = [...quickActionMacs];
@@ -739,7 +741,10 @@ function renderDeviceTraffic(report) {
     container.append(empty);
   }
 }
-function quickActionInfo(id) { return (actionCatalog?.actions || []).find(item => item.id === id) || null; }
+function quickActionInfo(id) {
+  return [...(actionCatalog?.actions || []), ...(actionCatalog?.bandwidth_options || [])]
+    .find(item => item.id === id) || null;
+}
 function renderQuickActions() {
   const select = $("quick-action-choice");
   const durationLabel = $("quick-action-duration-label");
@@ -750,7 +755,14 @@ function renderQuickActions() {
   const protectedTargets = activeMacs.filter(mac => inventory.some(item => item.mac === mac && item.protected));
   const missingGroup = actionTargetGroupId !== null && !(deviceData?.groups || []).some(group => Number(group.id) === Number(actionTargetGroupId));
   const unavailableOnlyModes = QUICK_ACTIONS.slice(5).filter(([id]) => !quickActionInfo(id)?.enabled);
-  const actionItems = QUICK_ACTIONS.filter(([id]) => !id.startsWith("only_") || quickActionInfo(id)?.enabled);
+  const bandwidthOptions = Array.isArray(actionCatalog?.bandwidth_options) ? actionCatalog.bandwidth_options : [];
+  const hasBandwidthControls = bandwidthOptions.some(item => item.enabled);
+  $("quick-action-category-label").hidden = !hasBandwidthControls;
+  const category = $("quick-action-category");
+  if (!hasBandwidthControls) category.value = "connection";
+  category.disabled = quickActionBusy;
+  const actionItems = category.value === "bandwidth" ? bandwidthOptions.map(item => [item.id, item.label]) :
+    QUICK_ACTIONS.filter(([id]) => !id.startsWith("only_") || quickActionInfo(id)?.enabled);
   select.innerHTML = actionItems.map(([id, fallback]) => {
     const item = quickActionInfo(id);
     const label = item?.label || fallback;
@@ -760,9 +772,9 @@ function renderQuickActions() {
   const desired = actionItems.some(([id]) => id === choice && quickActionInfo(id)?.enabled) ? choice :
     (actionItems.find(([id]) => quickActionInfo(id)?.enabled)?.[0] || "");
   select.value = desired;
-  select.disabled = !actionCatalog || !desired;
+  select.disabled = quickActionBusy || !actionCatalog || !desired;
   durationLabel.hidden = desired !== "pause";
-  $("quick-action-duration").disabled = !actionCatalog || desired !== "pause";
+  $("quick-action-duration").disabled = quickActionBusy || !actionCatalog || desired !== "pause";
   const count = actionTargetGroupId !== null ?
     `Group${missingGroup ? " · no longer available" : ` · ${(deviceData?.groups || []).find(g => Number(g.id) === Number(actionTargetGroupId))?.members?.length || 0} devices`}` :
     `${activeMacs.length} device${activeMacs.length === 1 ? "" : "s"} selected`;
@@ -780,8 +792,8 @@ function renderQuickActions() {
     `${unavailableOnlyModes.map(([id, fallback]) => `${quickActionInfo(id)?.label || fallback} unavailable${quickActionInfo(id)?.reason ? `: ${quickActionInfo(id).reason}` : ""}`).join(" · ")}. Prefer WAN keeps the router’s configured failover behavior.` : "";
   const hasTarget = actionTargetGroupId !== null ? !missingGroup : activeMacs.length > 0;
   const stale = missing.length > 0 || protectedTargets.length > 0;
-  $("quick-action-clear").disabled = !hasTarget && !activeMacs.length;
-  $("quick-action-review").disabled = !actionCatalog || !selectedAction?.enabled || !hasTarget || stale;
+  $("quick-action-clear").disabled = quickActionBusy || (!hasTarget && !activeMacs.length);
+  $("quick-action-review").disabled = quickActionBusy || !actionCatalog || !selectedAction?.enabled || !hasTarget || stale;
   syncDeviceTraffic(hasTarget && !stale, missingGroup ? "This group is no longer available." :
     stale ? "A selected device is stale or protected. Refresh the device list before requesting traffic." : "");
 }
@@ -809,6 +821,10 @@ function quickActionDialog(preview) {
 }
 
 $("quick-action-choice").addEventListener("change", renderQuickActions);
+$("quick-action-category").addEventListener("change", () => {
+  $("quick-action-choice").value = "";
+  renderQuickActions();
+});
 $("quick-action-duration").addEventListener("change", renderQuickActions);
 $("quick-action-clear").addEventListener("click", () => {
   quickActionMacs.clear(); actionTargetGroupId = null; renderDevices();
@@ -816,6 +832,8 @@ $("quick-action-clear").addEventListener("click", () => {
 $("quick-action-cancel").onclick = () => $("quick-action-dialog").close("cancel");
 $("quick-action-apply").onclick = () => $("quick-action-dialog").close("apply");
 $("quick-action-review").addEventListener("click", async event => {
+  if (quickActionBusy) return;
+  quickActionBusy = true;
   const button = event.currentTarget;
   const action = $("quick-action-choice").value;
   const durationSeconds = action === "pause" ? Number($("quick-action-duration").value || 3600) : 0;
@@ -823,6 +841,7 @@ $("quick-action-review").addEventListener("click", async event => {
   const reviewedMacs = [...quickActionMacs];
   const target = reviewedGroupId !== null ? {group_id: reviewedGroupId} : {macs: reviewedMacs};
   button.disabled = true;
+  button.textContent = "Preparing review…";
   try {
     const response = await fetch("/api/actions/preview", {method:"POST", credentials:"same-origin",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify({...target, action, duration_seconds:durationSeconds})});
@@ -834,6 +853,8 @@ $("quick-action-review").addEventListener("click", async event => {
     if (reviewedGroupId === null && reviewedMacs.some(mac =>
       !(deviceData?.devices || []).some(item => item.mac === mac && !item.protected)))
       throw new Error("A selected device changed while the review was open. Refresh and review again.");
+    button.textContent = "Applying…";
+    deviceNotice("Applying the reviewed settings. The router may need about 30 seconds.");
     const applied = await fetch("/api/actions/apply", {method:"POST", credentials:"same-origin",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify({token:preview.token, confirmed:true})});
     const result = await applied.json();
@@ -844,6 +865,8 @@ $("quick-action-review").addEventListener("click", async event => {
   } catch (err) {
     deviceNotice("Action not completed: " + err.message, true);
   } finally {
+    quickActionBusy = false;
+    button.textContent = "Review action";
     button.disabled = false;
     renderQuickActions();
   }
@@ -1029,6 +1052,8 @@ function renderDevices() {
         !x.reserved ? `<p class="device-route-help">To steer safely, create an Address Reservation in Omada for this MAC and its current IP. The device stays on automatic DHCP; it may need to renew its lease once.</p>` :
         `<p class="device-route-help">${esc(d.control?.reason || "WAN controls are locked.")}</p>`;
       const pauseRecord = pauseForMac(mac);
+      const savedCap = (actionCatalog?.bandwidth_caps || []).find(cap => cap.mac === mac);
+      const capText = savedCap ? `Saved WAN 2 limit: ↓ ${savedCap.down_kbps / 1000} · ↑ ${savedCap.up_kbps / 1000} Mbps` : "";
       const pauseVerified = pauseRecord?.status === "paused";
       const canPause = pauseControlsEnabled() && !x.protected && !!mac;
       const canResume = !!pauseRecord && !!pauseData.state?.cleanup_enabled;
@@ -1056,6 +1081,7 @@ function renderDevices() {
           <span class="device-history">WAN preference: ${esc(routeName)}${x.route_expires_at ? ` · returns to Auto ${esc(deviceDate(x.route_expires_at))}` : x.route !== "AUTO" ? " · until changed" : ""}</span>
           ${routeAttention ? `<span class="device-route-help note warn" role="status">${esc(routeAttention)}</span>` : ""}
           <span class="device-history">${esc(internetStatus)}</span>
+          ${capText ? `<span class="device-history">${esc(capText)}</span>` : ""}
           ${routeSafety ? `<span class="device-history">${esc(routeSafety)} This rule stays on the ER605 if the Pi is offline.</span>` : ""}
           <details class="device-full-details"><summary>Device details</summary><div class="device-full-details-content">
             <span class="device-meta">IP ${esc(x.ip || "not assigned")}</span>

@@ -83,10 +83,43 @@ The separate classification form exposes `class` (`class1`, `class2`, or
 `class3`), `status` (`enable` or `disable`), `ip` (`ipv4` or `ipv6`), `src_ip`,
 `dst_ip`, `dscp`, `service`, `rule`, `ipt_order`, and `id`. It maps address
 choices to IPv4/IPv6 group catalogs and loads service and DSCP catalogs. This
-classifies traffic and assigns a QoS class/DSCP value; it is distinct from the
+classifies traffic and assigns a QoS class; it is distinct from the
 rate-rule editor's per-interface rate fields. Neither UI schema alone proves
 packet treatment, scheduler behavior, or that the class order corresponds to a
-specific bandwidth guarantee.
+specific bandwidth guarantee. Classification matches existing DSCP markings;
+outbound tagging uses a separate form. See the vendor's
+[standalone QoS guide](https://support.omadanetworks.com/us/document/132003/?app=kasa).
+
+### Verified read and pilot contracts
+
+On the reviewed build, `qos/global` returns `{id, result, error_code}`. Its
+result contains `.name`, `.type`, `.anonymous`, `qos_enable`, `threshold_enable`,
+`qos_threshold`, `bandwidth`, and `interface`. Enable flags are `on`/`off`.
+Writes can add a digit-string `qos_setting_number`; its meaning is unverified.
+It is retained as read-only metadata and must not be interpreted as a rule count.
+
+`qos/rule` returns `{id, others: {max_rules}, result, error_code}`. An empty
+result is `{}`; a populated result is a list. Observed IP-group rows omit the
+unused `network` field and add `.name`, `.type`, `.anonymous`, `setting_index`,
+`t_ping_label`, and `t_pong_label`. Position is a one-based integer. Parsers reject
+unknown fields and unsupported source types rather than guessing their effect.
+
+Bounded disposable-client pilots verified WAN2 upload/download caps, two
+independent rate rules, and removal of the first rule while the second remains
+effective. Immediate read-back preceded actual enforcement. The bundled UI
+warns of a ten-second QoS delay; pilots waited twenty seconds before measuring.
+Authentication sessions must close before this wait or a traffic measurement.
+These results do not validate WAN1, shared-group limits, arbitrary existing QoS
+rules, traffic classification, or interrupted multi-step recovery. The new API
+helper remains separate from production controls pending those integration checks.
+
+The separate `qos_ctl/bandwidth` collection uses `{id, result, error_code}` and
+contains per-interface profiles. Its editable fields are `name`, `status`,
+`direction`, `inbound`, `outbound`, `class1`, `class2`, `class3`, `others`,
+`udpEnable`, optional `udp`, and `ack`. Flags use `enable`/`disable`; direction
+uses `in`/`out`/`both`. Four class shares must total 100, with each at least 1.
+These WAN-wide profiles are distinct from per-device rate caps. Changing them
+can affect other clients and requires a separate owner-reviewed test window.
 
 ### Safe implementation path
 
@@ -96,19 +129,21 @@ as unavailable. Use the authenticated `ER605Client.session()` and
 `get_response()` pattern, serialized under the router's existing `api_lock`.
 Validate the exact response shape on the reviewed firmware before adding writes.
 
-If a later owner-approved feature adds a per-device rate rule, keep the global
-QoS settings read-only and leave their current values unchanged. Require global
-QoS to already be enabled, a fresh unique device/IP-group mapping, an explicit
-WAN/interface, and a preview of the selected interface plus both Kbps values and
-mode. Implement only the exact observed add/delete protocol after separately
-verifying its request envelope and read-back behavior. Before writing, re-read
-the full rule collection; after writing, require exact row read-back. Roll back
-only the exact newly-created row if its identity and full payload still match;
-on ambiguous state, retain a recovery lock and require operator review. Never
-remove or rewrite pre-existing QoS rules as cleanup. Until these protocol,
-global-setting, and controlled endpoint checks pass, per-device QoS remains
-unavailable. The existing `ER605Client.set_row()` allowlist does not include
-QoS forms and is not a basis for adding them without those checks.
+The staged bandwidth provider uses the observed rule add/delete protocol and a
+separate durable operation journal. It requires a fresh unique DHCP identity,
+an exact NetPulse source group, and a preview of the WAN plus both Kbps values.
+Before writing, it rechecks the full collection against saved cap records.
+The first-cap review can include global engine activation only when both rule
+tables are empty. The observed global request is `method: "set"` with direct
+`params` containing only `qos_enable`, `threshold_enable`, and digit-string
+`qos_threshold`; it is not a grid-row update.
+
+Read-back is followed by twenty seconds outside the authenticated session and a
+fresh check. Failed or interrupted operations restore only known recorded
+states; unknown rules or external drift retain the recovery lock. Integrated
+provider, process-crash recovery, and existing-flow acceptance are still pending,
+so the production code gate remains false. The generic `ER605Client.set_row()`
+allowlist does not expose arbitrary QoS writes.
 
 ## Allowlisted configuration writes
 
@@ -130,7 +165,16 @@ For a single-WAN device preference, NetPulse creates or updates a per-device pol
 
 The staged strict path writes `mode = "Only"`, requires exact interface/mode read-back, and stores the distinct intent `WAN1_ONLY` or `WAN2_ONLY`. Unknown or missing enabled-row modes are treated as unreadable, never as Priority. New strict actions are blocked by `STRICT_WAN_TRANSITIONS_VERIFIED = False`, even when the configuration flag is true. Auto and Prefer remain available to clear existing strict rules.
 
-On the reviewed firmware, adding a new Only rule blocked the alternate WAN in controlled IPv4 probes, but changing an existing Priority rule to Only left forwarding on the previous WAN despite exact form read-back. Keep strict controls unavailable until transition, rollback, and interrupted-operation recovery pass packet-level acceptance. The intended exclusion applies to IPv4 through this router; it never controls IPv6, mobile data, VPNs through other paths, or other routers.
+Immediate probes after an Only-mode change continued on the previous WAN despite
+exact form read-back; deleting and re-adding the rule did not establish immediate
+enforcement either. A later disposable-client test waited thirty seconds after
+each native write. Initial Only WAN1, Only WAN2, Prefer WAN2, Prefer-to-Only WAN1,
+and return to Only WAN2 then passed their IPv4 packet checks, with an independent
+client remaining online. Treat the forwarding delay as an apply stage, not an
+instant success. The code gate remains closed until delayed apply, rollback,
+existing-flow behavior, and interrupted-operation recovery are integrated and
+validated. The exclusion concerns IPv4 through this router; it does not control
+IPv6, mobile data, VPNs through other paths, or other routers.
 
 ## Firmware review and persisted locks
 

@@ -40,6 +40,67 @@ class CombinedActions(unittest.TestCase):
         self.routes._refresh_transaction_uptime = lambda: None
         self.actions = ActionControl(self.routes)
 
+    def bandwidth_provider(self):
+        client = self.client
+        class Provider:
+            changed = False
+            checks = 0
+            def state(self):
+                return {"enabled": True, "cleanup_enabled": True}
+            def records(self):
+                return []
+            def preview(self, targets, actor, **kwargs):
+                self.targets, self.actor, self.parameters = targets, actor, kwargs
+                return {"token": "private-cap-review", "fingerprint": "cap-before-state",
+                        "effect": "Limit each selected device to 5 Mbps on WAN2."}
+            def check_review(self, token, actor):
+                self.checks += 1
+                if self.changed:
+                    raise ValueError("Bandwidth before-state changed")
+            def apply(self, token, actor, check_unchanged):
+                assert token == "private-cap-review" and actor == self.actor
+                check_unchanged()
+                assert any(row.get("mac") == MAC for row in client.forms[("dhcps", "reservation")])
+                assert any(row.get("name") == "NP_G_" + MAC.replace("-", "")
+                           for row in client.forms[("ipgroup", "ipgroup_reservation")])
+                return {"applied": True, "count": len(self.targets), "members": self.targets}
+        provider = Provider()
+        self.actions.bandwidth = provider
+        return provider
+
+    def test_bandwidth_review_prepares_reservation_and_address_without_changing_wan(self):
+        provider = self.bandwidth_provider()
+        review = self.actions.preview(macs=[MAC], action="bandwidth_wan2_5m", actor="owner")
+        self.assertEqual(review["reservation_count"], 1)
+        self.assertEqual(self.client.writes, [])
+        self.assertEqual(provider.parameters["down_kbps"], 5000)
+        self.assertEqual(provider.parameters["up_kbps"], 5000)
+        self.assertEqual(self.actions.apply(review["token"], "owner")["count"], 1)
+        self.assertEqual(provider.checks, 1)
+        self.assertEqual(self.client.forms[("policy_route", "policy_route")], [])
+        with self.assertRaises(ControlError):
+            self.actions.apply(review["token"], "owner")
+
+    def test_changed_bandwidth_review_stops_before_automatic_reservation(self):
+        provider = self.bandwidth_provider()
+        review = self.actions.preview(macs=[MAC], action="bandwidth_wan2_5m", actor="owner")
+        provider.changed = True
+        with self.assertRaisesRegex(ValueError, "before-state changed"):
+            self.actions.apply(review["token"], "owner")
+        self.assertEqual(self.client.writes, [])
+
+    def test_bandwidth_fingerprint_binds_provider_review_and_requires_same_owner(self):
+        self.bandwidth_provider()
+        review = self.actions.preview(macs=[MAC], action="bandwidth_wan2_5m", actor="owner")
+        with self.assertRaisesRegex(ControlError, "actor differs"):
+            self.actions.apply(review["token"], "another-owner")
+        self.assertEqual(self.client.writes, [])
+        pending = {"action": "bandwidth_wan2_5m", "actor": "owner", "duration_seconds": 0,
+                   "targets": [], "bandwidth_fingerprint": "first"}
+        first = self.actions._fingerprint(pending)
+        pending["bandwidth_fingerprint"] = "changed-cap-state"
+        self.assertNotEqual(first, self.actions._fingerprint(pending))
+
     def test_preview_is_read_only_and_combines_missing_reservation_with_route(self):
         preview = self.actions.preview(macs=[MAC], action="prefer_wan1", actor="owner")
         self.assertEqual(preview["reservation_count"], 1)

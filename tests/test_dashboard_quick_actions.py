@@ -41,7 +41,7 @@ class DashboardQuickActions(unittest.TestCase):
         harness = r"""
 const assert = require('node:assert/strict');
 const source = JSON.parse(process.argv[1]);
-const ids = ['quick-action-choice', 'quick-action-duration-label', 'quick-action-duration',
+const ids = ['quick-action-choice', 'quick-action-category', 'quick-action-category-label', 'quick-action-duration-label', 'quick-action-duration',
   'quick-action-count', 'quick-action-status', 'quick-action-capability',
   'quick-action-clear', 'quick-action-review', 'device-traffic-load',
   'device-traffic-status', 'device-traffic-results'];
@@ -65,7 +65,7 @@ let deviceData = {devices:[{mac:'AA:BB:CC:DD:EE:FF', protected:false}], groups:[
 const quickActionMacs = new Set(['AA:BB:CC:DD:EE:FF']);
 const controls = new Function('$', 'esc', 'actionCatalog', 'actionCatalogError', 'deviceData',
   'quickActionMacs', 'let actionTargetGroupId = null;\n' + source +
-  '\nreturn {render: renderQuickActions, setGroup(id) { actionTargetGroupId = id; }};')(
+  '\nreturn {render: renderQuickActions, setGroup(id) { actionTargetGroupId = id; }, setBusy(value) { quickActionBusy = value; }};')(
     $, esc, actionCatalog, actionCatalogError, deviceData, quickActionMacs);
 const render = controls.render;
 render();
@@ -73,6 +73,23 @@ assert.match($('quick-action-choice').innerHTML, /Auto balance/);
 assert.doesNotMatch($('quick-action-choice').innerHTML, /Only WAN 1/);
 assert.match($('quick-action-capability').textContent, /unavailable/);
 assert.equal($('quick-action-review').disabled, false, 'enabled server action can be reviewed');
+assert.equal($('quick-action-category-label').hidden, true, 'unavailable bandwidth controls stay out of the everyday menu');
+actionCatalog.bandwidth_options = [{id:'bandwidth_wan2_5m', label:'WAN 2 · 5 Mbps per device', enabled:true}];
+render();
+assert.equal($('quick-action-category-label').hidden, false);
+assert.doesNotMatch($('quick-action-choice').innerHTML, /5 Mbps/, 'bandwidth choices do not clutter connection actions');
+$('quick-action-category').value = 'bandwidth';
+render();
+assert.match($('quick-action-choice').innerHTML, /5 Mbps/);
+assert.doesNotMatch($('quick-action-choice').innerHTML, /Auto balance/);
+controls.setBusy(true);
+render();
+assert.equal($('quick-action-review').disabled, true, 'a pending apply cannot be submitted again');
+assert.equal($('quick-action-category').disabled, true);
+controls.setBusy(false);
+actionCatalog.bandwidth_options[0].enabled = false;
+render();
+assert.equal($('quick-action-category').value, 'connection', 'lost capability clears the bandwidth action');
 
 quickActionMacs.add('11:22:33:44:55:66');
 render();
@@ -112,7 +129,7 @@ const assert = require('node:assert/strict');
 const actionsSource = JSON.parse(process.argv[1]);
 const routeSource = JSON.parse(process.argv[2]);
 const changeSource = JSON.parse(process.argv[3]);
-const ids = ['quick-action-choice', 'quick-action-duration-label', 'quick-action-duration',
+const ids = ['quick-action-choice', 'quick-action-category', 'quick-action-category-label', 'quick-action-duration-label', 'quick-action-duration',
   'quick-action-count', 'quick-action-status', 'quick-action-capability', 'quick-action-clear',
   'quick-action-review', 'quick-action-dialog-title', 'quick-action-dialog-summary',
   'quick-action-dialog-members', 'quick-action-dialog-reservations', 'quick-action-dialog-effect',

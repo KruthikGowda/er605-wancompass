@@ -70,9 +70,27 @@ for up to 15 seconds; stale, ambiguous, disabled, reset, or malformed data is
 marked unavailable instead of shown as zero.
 
 RX and TX are the router's observed directions; their client upload/download
-meaning has not been validated. These measurements do not identify a WAN path and
-do not apply QoS priorities, bandwidth limits, or reservations. Those controls
-remain unavailable until router support and enforcement are verified.
+meaning has not been validated. These measurements do not identify a WAN path.
+
+WAN2 IPv4 caps are staged behind a code acceptance gate and
+`router.bandwidth_controls_enabled = false`. When accepted and enabled, the
+bandwidth submenu offers 2, 5, 10, 25, or 50 Mbps per device, applied equally to
+upload and download, plus removal. A group applies the chosen cap separately to
+each member; it does not share one allowance. Telegram uses the same selection,
+review, and confirmation flow as connection actions. The dashboard keeps these
+choices in a separate Bandwidth category.
+
+The first cap review explicitly includes turning on the router-wide bandwidth
+engine if it is off. This setup is allowed only when both QoS rule lists are
+empty. Existing or unknown external QoS rules require manual review. Changing
+caps can take 20 seconds. Failed operations attempt to restore the recorded
+before-state; ambiguous recovery locks further controls. Recovery resumes after
+service restart when the router is ready. Stored router caps remain effective
+while the Pi is offline.
+
+Traffic-class priority remains unavailable pending a congestion test. Choosing
+Prefer WAN changes the route; it does not reserve bandwidth or increase a
+device's traffic priority.
 
 See [Internet controls](internet-controls.md), [configuration](CONFIGURATION.md),
 and [optional administration access](ADMIN_ACCESS.md).

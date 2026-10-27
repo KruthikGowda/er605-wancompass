@@ -301,6 +301,12 @@ class GroupPickerConversations(unittest.TestCase):
         return next(button["callback_data"] for row in markup["inline_keyboard"] for button in row
                     if text.casefold() in button["text"].casefold())
 
+    @staticmethod
+    def _callback(markup, verb, index=0):
+        return next(button["callback_data"] for row in markup["inline_keyboard"] for button in row
+                    if f":{verb}:" in button["callback_data"] and
+                    button["callback_data"].endswith(f":{index}"))
+
     def _tap(self, data):
         return self.picker.callback({"data": data, "from": {"id": OWNER},
                                      "message": {"chat": {"id": int(OWNER), "type": "private"}}})
@@ -474,6 +480,106 @@ class GroupPickerConversations(unittest.TestCase):
         self.assertIn("unavailable from verified router controls", text)
         self.assertIn("No measured speed", text)
         self.assertEqual(len(self.bandwidth_calls), 1)
+
+    def test_bandwidth_control_options_route_through_review_confirm_and_back(self):
+        controls = [{"id": "verified_qos", "label": "Enable QoS", "enabled": True},
+                    {"id": "cap_downlink", "label": "Set downlink cap", "enabled": True},
+                    {"id": "future", "label": "Future control", "enabled": False,
+                     "reason": "not verified"}]
+        self.bandwidth_calls.clear()
+        self.picker._bandwidth = lambda payload, chat: {
+            "text": "Rates are read-only.", "options": ["Down 80 Mbps"],
+            "control_options": controls}
+        route_previews, applied = [], []
+
+        def preview(payload, chat):
+            route_previews.append((dict(payload), chat))
+            return {"text": "Review " + payload["action"], "confirm_token": "review-secret",
+                    "fingerprint": repr((payload, chat))}
+
+        self.picker._preview = preview
+        self.picker._apply = lambda token, chat: applied.append((token, chat)) or "Applied"
+        self.picker.begin("devices", OWNER, OWNER)
+        _, actions = self.picker.message("1", OWNER, OWNER)
+        menu_text, menu = self._tap(self._button(actions, "Bandwidth and priority"))
+        # Buttons are compact pairs; the disabled option is text only.
+        self.assertEqual([[b["text"] for b in row] for row in menu["inline_keyboard"]],
+                         [["Enable QoS", "Set downlink cap"], ["‹ Back", "Cancel"]])
+        self.assertIn("Rates are read-only.", menu_text)
+
+        text, review = self.picker.message("2", OWNER, OWNER)
+        payload = {"kind": "devices", "items": [self.devices[0]], "action": "cap_downlink"}
+        self.assertEqual(route_previews[-1], (payload, OWNER))
+        self.assertIn("Review cap_downlink", text)
+        self.assertNotIn("review-secret", text)
+        text, menu = self._tap(self._callback(review, "back"))
+        self.assertIn("Controls to review", text)
+        # Leaving the submenu returns to actions with the selected device retained.
+        _, actions = self._tap(self._callback(menu, "back"))
+        self.assertEqual(self.picker._sessions[(OWNER, OWNER)].selected, [0])
+        _, menu = self._tap(self._button(actions, "Bandwidth and priority"))
+        _, review = self._tap(self._callback(menu, "bandwidth", 0))
+        self.assertEqual(route_previews[-1][0]["action"], "verified_qos")
+        text, _ = self._tap(self._callback(review, "confirm"))
+        self.assertEqual(text, "Applied")
+        self.assertEqual(applied, [("review-secret", OWNER)])
+
+    def test_bandwidth_control_lists_fail_closed_and_legacy_omission_stays_read_only(self):
+        self.picker.begin("devices", OWNER, OWNER)
+        _, actions = self.picker.message("1", OWNER, OWNER)
+        malformed = [
+            [{"id": "bad-id!", "label": "Unsafe"}],
+            [{"id": "same", "label": "One"}, {"id": "same", "label": "Two"}],
+            [{"id": "valid", "label": "x" * 73}],
+            [{"id": "valid", "label": "Valid"}] * 17,
+        ]
+        for entries in malformed:
+            self.picker._bandwidth = lambda payload, chat, entries=entries: {
+                "text": "Rates only.", "control_options": entries}
+            text, menu = self._tap(self._button(actions, "Bandwidth and priority"))
+            self.assertFalse(any("bandwidth:" in b["callback_data"] for row in menu["inline_keyboard"] for b in row))
+            self.assertIn("invalid", text)
+            _, actions = self._tap(self._callback(menu, "back"))
+
+        self.picker._bandwidth = lambda payload, chat: {"text": "Rates only.", "options": ["Down 80 Mbps"]}
+        _, menu = self._tap(self._button(actions, "Bandwidth and priority"))
+        self.assertEqual([[b["text"] for b in row] for row in menu["inline_keyboard"]],
+                         [["‹ Back", "Cancel"]])
+        _, actions = self._tap(self._callback(menu, "back"))
+        self.assertFalse(self.picker._sessions[(OWNER, OWNER)].bandwidth_control_state)
+
+    def test_bandwidth_control_refresh_mismatch_stale_callbacks_and_actor_binding(self):
+        current = [{"id": "verified_qos", "label": "Enable QoS", "enabled": True}]
+        previews = []
+        applied = []
+        self.picker._preview = lambda payload, chat: previews.append((payload, chat)) or {
+            "text": "Review", "confirm_token": "review", "fingerprint": repr(payload)}
+        self.picker._apply = lambda token, chat: applied.append((token, chat)) or "Applied"
+        self.picker._bandwidth = lambda payload, chat: {"text": "Rates", "control_options": current}
+        self.picker.begin("devices", OWNER, OWNER)
+        _, actions = self.picker.message("1", OWNER, OWNER)
+        _, menu = self._tap(self._button(actions, "Bandwidth and priority"))
+        stale = self._callback(menu, "bandwidth", 0)
+        current[:] = [{"id": "verified_qos", "label": "Enable verified QoS", "enabled": True}]
+        text, refreshed = self._tap(stale)
+        self.assertIn("changed or is no longer available", text)
+        self.assertEqual(previews, [])
+        self.assertIsNone(self._tap(stale), "old menu revision cannot select again")
+
+        selected = self._callback(refreshed, "bandwidth", 0)
+        text, _ = self.picker.callback({"data": selected, "from": {"id": "77"},
+                                        "message": {"chat": {"id": int(OWNER), "type": "private"}}})
+        self.assertIn("expired", text)
+        self.assertEqual(previews, [])
+
+        current[:] = [{"id": "verified_qos", "label": "Enable verified QoS", "enabled": True}]
+        _, review = self._tap(selected)
+        # The backend removes the selected control before confirmation.
+        current.clear()
+        text, refreshed = self._tap(self._callback(review, "confirm"))
+        self.assertIn("changed since review", text)
+        self.assertEqual(applied, [])
+        self.assertFalse(self.picker._sessions[(OWNER, OWNER)].bandwidth_control_state)
 
 
 class TelegramMoreMenu(unittest.TestCase):
