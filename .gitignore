@@ -33,3 +33,5 @@ router.toml
 build/
 dist/
 .pytest_cache/
+output/
+.playwright-cli/

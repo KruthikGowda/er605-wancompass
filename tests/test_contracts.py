@@ -166,6 +166,14 @@ class ApiContract(Base):
         self.assertEqual(r.status, 200, path)
         return body
 
+    def test_live_measurements_and_offline_dashboard_assets(self):
+        live = json.loads(self.get("/api/live"))
+        self.assertEqual(live["interval_seconds"],10)
+        self.assertEqual({p["wan"] for p in live["points"]},{"WAN1","WAN2"})
+        self.assertTrue(all("loss_pct" in p and "jitter_ms" in p for p in live["points"]))
+        self.assertIn(b"renderNetworkOverview",self.get("/static/live.js"))
+        self.assertIn(b".live-grid",self.get("/static/dashboard.css"))
+
     def post(self, path, body, origin=None):
         host = f"127.0.0.1:{self.server.server_address[1]}"
         headers = {"Content-Type": "application/json"}
@@ -869,6 +877,12 @@ class DashboardConsistency(unittest.TestCase):
 
 
 class DashboardAuthentication(unittest.TestCase):
+    def test_live_data_and_assets_require_existing_authentication(self):
+        for path in ("/api/live","/static/live.js","/static/dashboard.css"):
+            with self.subTest(path=path):
+                self.assertEqual(self.request(path)[0],401)
+                self.assertEqual(self.request(path,("netpulse","local-test-password"))[0],200)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -1075,6 +1089,7 @@ class TelegramOverHttp(unittest.TestCase):
         self.assertIn("Delivery check", self.tg.sent_to(self.OWNER))
         self.assertEqual(self.bot.delivery_stats(), {
             "accepted": 1, "failed": 0, "queue_dropped": 0, "queued": 0,
+            "durable_pending": 0, "durable_store_ok": True, "oldest_pending_age_seconds": 0,
             "categories": {"device_notice": {"accepted": 0, "failed": 0, "queue_dropped": 0, "queued": 0}},
         })
 
@@ -1102,6 +1117,7 @@ class TelegramOverHttp(unittest.TestCase):
         self.assertNotIn(private_text, output)
         self.assertEqual(bot.delivery_stats(), {
             "accepted": 0, "failed": 1, "queue_dropped": 0, "queued": 0,
+            "durable_pending": 0, "durable_store_ok": False, "oldest_pending_age_seconds": 0,
             "categories": {"device_notice": {"accepted": 0, "failed": 0, "queue_dropped": 0, "queued": 0}},
         })
 
@@ -1113,6 +1129,7 @@ class TelegramOverHttp(unittest.TestCase):
             bot.send("one more")
         self.assertEqual(bot.delivery_stats(), {
             "accepted": 0, "failed": 0, "queue_dropped": 1, "queued": bot._outbox.maxsize,
+            "durable_pending": 0, "durable_store_ok": False, "oldest_pending_age_seconds": 0,
             "categories": {"device_notice": {"accepted": 0, "failed": 0, "queue_dropped": 0, "queued": 0}},
         })
 

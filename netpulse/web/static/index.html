@@ -278,6 +278,7 @@
     .monitor { transition: none; }
   }
 </style>
+<link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
 <main>
@@ -299,14 +300,27 @@
     </div>
     <h1 class="verdict" id="verdict">Starting up</h1>
     <p class="because" id="because">Checking both connections…</p>
+    <div class="ops-summary" id="ops-summary"></div>
     <div class="traces" id="traces"></div>
     <div id="muted"></div>
     <p class="monitor-policy" id="alert-policy-summary">Checking alert delivery settings…</p>
     <details class="monitor-details"><summary>Alert settings and delivery</summary><p id="alert-policy" style="margin:0"></p></details>
   </section>
 
+  <section aria-label="Live WAN measurements">
+    <div class="live-toolbar"><h2>Live WAN measurements</h2><div class="live-tools">
+      <label>Measure <select id="live-metric"><option value="rtt_ms">Latency · ms</option><option value="loss_pct">Packet loss · %</option><option value="jitter_ms">Jitter · ms</option></select></label>
+      <label>Window <select id="live-window"><option value="15">15 minutes</option><option value="60">1 hour</option></select></label>
+    </div></div>
+    <div class="live-grid" id="live-plots"></div>
+    <p class="telemetry-note" id="live-status">Waiting for measurements…</p>
+    <p class="telemetry-note">These graphs show probe quality, not download speed or household bandwidth. Samples refresh every 10 seconds; missing measurements remain gaps.</p>
+  </section>
+
   <h2 class="section-heading">Your connections</h2>
   <div class="isps" id="isps"></div>
+
+
 
   <div id="router-wrap" hidden>
     <h2 class="section-heading">Router</h2>
@@ -488,6 +502,7 @@
   </footer>
 </main>
 
+<script src="/static/live.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -1585,6 +1600,7 @@ async function refreshStatus() {
   try { s = await getJSON("/api/status"); } catch (e) {
     $("updated").textContent = "Connection lost · showing last known status";
     $("updated").classList.add("stale");
+    if (lastStatus && typeof renderNetworkOverview === "function") renderNetworkOverview({...lastStatus,updated:0});
     return;
   }
   $("updated").classList.remove("stale");
@@ -1624,6 +1640,7 @@ async function refreshStatus() {
     : "";
   $("alert-policy").textContent = `${alertPolicyText} Suppressed since service start: ${Number(suppressed.mute) || 0} muted · ${Number(suppressed.quiet_hours) || 0} in quiet hours · ${Number(suppressed.rate_limited) || 0} rate-limited. Resets when NetPulse restarts.${deliveryText}${deviceDeliveryText}`;
   renderISPs(s);
+  if (typeof renderNetworkOverview === "function") renderNetworkOverview(s);
   renderRouter(s.router, s.wans);
   drawTraces();
   $("mode-note").textContent = s.mode === "dry-run"
@@ -2025,8 +2042,8 @@ segment("range", "h", v => hours = Number(v));
 $("server").onchange = e => { server = e.target.value; refreshHistory(); };
 let resizeTimer; window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(refreshHistory, 150); });
 
-refreshStatus().then(() => { refreshDevices(); refreshPiHealth(); refreshTraces(); refreshHistory(); refreshEvents(); refreshDecisionReview(); refreshSpeed(); });
-setInterval(refreshStatus, 10000);
+refreshStatus().then(() => { refreshDevices(); refreshPiHealth(); refreshTraces(); refreshHistory(); refreshEvents(); refreshDecisionReview(); refreshSpeed(); refreshLive(); });
+setInterval(() => { if (!document.hidden) { refreshStatus(); refreshLive(); } }, 10000);
 setInterval(() => { refreshDevices(); refreshPiHealth(); refreshTraces(); refreshHistory(); refreshEvents(); refreshDecisionReview(); refreshSpeed(); }, 60000);
 </script>
 </body>

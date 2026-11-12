@@ -47,6 +47,12 @@ Use `sudo python3 tools/wan_asn_discover.py` only if you want to identify candid
 
 ## Dashboard will not open or login fails
 
+The overview separates Internet usability from ping quality. Two independent HTTPS GET checks must return their expected empty HTTP 204 responses, with certificate verification and source-bound public DNS resolution. Web host resolution falls back from the primary public resolver to a second resolver. Redirects and unexpected pages are not followed or counted as successful checks. Error details distinguish DNS, TLS, timeout, unexpected response, and unavailable local probe address.
+
+Healthy paths are checked every 60 seconds, with 30-second checks after an application failure or ping outage. Results older than 180 seconds are unavailable. One failed web endpoint means partial reachability; two failed endpoints need repeated confirmation before an Internet alert. A portal or data allowance problem remains a possible explanation, not a verified account diagnosis. Successful check endpoints do not guarantee every website or application works.
+
+Live graphs use the most recent individual probe cycles, at the configured probe interval, retained in memory for up to an hour. They show latency, loss, and jitter on a common scale across WANs. The sample explorer works with keyboard and touch. Live history restarts with the service; the existing minute-aggregate history persists. Neither graph is a measurement of whole-home bandwidth. Missing samples stay gaps, and a stale monitor is not displayed as healthy.
+
 - Confirm the service is active and the host's address is reachable from the same trusted LAN.
 - Confirm the configured web port (default `8080`) and authentication path in `/etc/netpulse/config.toml`.
 - The dashboard is HTTP and should not be exposed through router port forwarding or an untrusted network.

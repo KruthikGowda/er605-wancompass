@@ -95,6 +95,10 @@ def run() -> None:
     Path(cfg.db_path).unlink(missing_ok=True)
     backfill(cfg, days=int(sys.argv[1]) if len(sys.argv) > 1 else 7)
     main.probe = fake_probe
+    from netpulse.probes.connectivity import ConnectivityResult, WebCheck
+    main.diagnose_connectivity = lambda source, now, **kw: ConnectivityResult(
+        now, True, True, "Synthetic independent web checks passed", icmp_state=kw.get("icmp_state","HEALTHY"),
+        web_checks=(WebCheck("Cloudflare",True,204),WebCheck("Google",True,204)))
     main.SpeedTester = DemoTester
     main.logging.basicConfig(level="INFO", format="%(levelname)s %(name)s: %(message)s")
     asyncio.run(main.run_async(cfg))

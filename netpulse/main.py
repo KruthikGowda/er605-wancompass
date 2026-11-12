@@ -13,6 +13,8 @@ import signal
 import sqlite3
 import sys
 import time
+from collections import deque
+import threading
 
 from netpulse import __version__, config as config_mod, summary
 from netpulse.config import Config, parse_hhmm
@@ -24,6 +26,7 @@ from netpulse.decision.group_advisor import GroupAdvisor
 from netpulse.health import metrics
 from netpulse.health.baseline import Baselines
 from netpulse.health.evaluator import Evaluation, State, WanTracker
+from netpulse.health.internet import InternetIncidents
 from netpulse.notifications.alerts import Alerter
 from netpulse.notifications.base import DEVICE_NOTICE_CATEGORY, Notifier, NullNotifier
 from netpulse.notifications.telegram import TelegramBot, parse_command, profile_texts
@@ -33,6 +36,7 @@ from netpulse.probes.connectivity import (
     check_interval_seconds as connectivity_check_interval,
     diagnose as diagnose_connectivity,
     result_is_fresh as connectivity_result_is_fresh,
+    internet_state,
 )
 from netpulse.probes.presence import (MAX_CLIENTS_PER_SCAN, MAX_CLIENT_ROWS_TO_SCAN,
                                       per_device_scan_interval_seconds,
@@ -162,6 +166,11 @@ class Monitor:
         self.connectivity_started: dict[str, float] = {}
         self._connectivity_notified: set[str] = set()
         self._application_reachability: dict[str, dict] = {}
+        self.internet_incidents = InternetIncidents(sqlite.KeyValueFile(cfg.db_path))
+        self._internet_latest: dict[str, dict] = {}
+        self._live_lock = threading.Lock()
+        self._live_points = deque(maxlen=max(2, int(3600 / cfg.interval_seconds)) * len(cfg.wans))
+        board.set_extra("live_monitor", self)
         self._disk_low: bool | None = None
         self._memory_low: bool | None = None
         self._system_health_stale: bool | None = None
@@ -194,8 +203,14 @@ class Monitor:
             before, before_since = tracker.state, tracker.state_since
             tracker.add(metrics.Cycle(now, res))
             e = tracker.evaluate(now, self.baselines)
+            current = metrics.compute([metrics.Cycle(now, res)])
+            with self._live_lock:
+                self._live_points.append({"ts": now, "wan": name, "state": e.state.value,
+                    "rtt_ms": current.rtt_ms if not e.local_problem and not tracker.local_failures else None,
+                    "loss_pct": current.loss_pct if not e.local_problem and not tracker.local_failures else None,
+                    "jitter_ms": current.jitter_ms if not e.local_problem and not tracker.local_failures else None})
             evals[name] = e
-            if e.state != before:
+            if e.state != before or (e.local_problem and name not in self.local_problems):
                 changes.append((e, before, now - before_since))
         for e, before, lasted in changes:
             self._on_state_change(now, e, before, lasted, evals)
@@ -372,6 +387,30 @@ class Monitor:
         """Report confirmed ICMP outages or sustained DNS/HTTPS issues without steering WANs."""
         if not connectivity_result_is_fresh(result.checked_at, now):
             return
+        if result.web_checks:
+            self._internet_latest[wan] = result.as_dict()
+            try:
+                self.storage.set_value("internet_latest_v1", json.dumps(self._internet_latest))
+            except sqlite3.Error:
+                log.warning("Latest Internet evidence could not be saved")
+            state, reason = internet_state(result)
+            event = self.internet_incidents.observe(wan, state, result.checked_at)
+            if event:
+                title = ("Internet checks recovered" if event["recovered"] else
+                         "Internet partially reachable" if state == "PARTIAL" else
+                         "monitoring unavailable" if state == "MONITOR_ERROR" else "Internet checks failing")
+                evidence = "; ".join(f"{check.provider}: " + ("expected response" if check.ok else
+                    f"HTTP {check.status_code}" if check.status_code else check.error.replace("_", " "))
+                    for check in result.web_checks)
+                message = (f"{self.label(wan)}: {title}. {reason}.\n{evidence}.\n"
+                           f"Ping quality: {result.icmp_state.lower()}. Confirmed by repeated checks; "
+                           "a quota or account problem needs confirmation from your provider.")
+                sent = self.alerter.alert(message, key=f"internet-{wan}",
+                    critical=event["recovered"] or state != "PARTIAL", now=now)
+                if sent:
+                    self.pending_events.append((int(result.checked_at), "connectivity", wan, message))
+                    self.internet_incidents.acknowledge(wan, event)
+            return
         if result.icmp_state == State.OFFLINE.value:
             if wan in self._connectivity_notified:
                 return
@@ -438,14 +477,14 @@ class Monitor:
         emoji = summary.STATE_EMOJI[e.state.value]
         if before == State.OFFLINE:
             # The 5-minute window still contains the outage, so loss numbers would look alarming.
-            lines = [f"✅ {name} is back online (was down for {_duration(lasted)})"]
+            lines = [f"✅ {name}: ping replies resumed (no replies for {_duration(lasted)})"]
             if e.state != State.HEALTHY:
                 lines.append("Still settling; you'll get a message when it's fully healthy.")
         else:
             if e.state == State.HEALTHY:
                 head = f"{emoji} {name} is healthy again (was {WORD[before]} for {_duration(lasted)})"
             elif e.state == State.OFFLINE:
-                head = f"{emoji} {name} is DOWN"
+                head = f"{emoji} {name}: ping checks are not responding"
             else:
                 head = f"{emoji} {name} is {WORD[e.state]}"
             lines = [head]
@@ -2375,6 +2414,13 @@ class Monitor:
     def label(self, wan: str) -> str:
         return self.labels[wan].label or wan
 
+    def live_history(self) -> dict:
+        with self._live_lock:
+            points = list(self._live_points)
+        return {"points": points, "interval_seconds": self.cfg.interval_seconds,
+                "updated": points[-1]["ts"] if points else None,
+                "max_age_seconds": max(30, self.cfg.interval_seconds * 3)}
+
     def display(self, wan: str) -> str:
         """'Example ISP A (WAN1)' when the WAN has a label, else just 'WAN1'."""
         label = self.labels[wan].label
@@ -2524,7 +2570,7 @@ async def run_async(cfg: Config) -> None:
                         result = task.result()
                         evaluation = evals.get(name) if evals else None
                         if (evaluation and evaluation.state != State.UNKNOWN
-                                and result.icmp_state == evaluation.state.value
+                                and (result.web_checks or result.icmp_state == evaluation.state.value)
                                 and connectivity_result_is_fresh(result.checked_at, now)):
                             mon.connectivity_results[name] = result
                             mon.on_connectivity_result(name, result, now)
@@ -2541,7 +2587,9 @@ async def run_async(cfg: Config) -> None:
                             and label.source_ip
                             and name not in connectivity_tasks
                             and now - mon.connectivity_started.get(name, 0.0)
-                            >= connectivity_check_interval(evaluation.state.value)):
+                            >= connectivity_check_interval(evaluation.state.value,
+                                internet_state(mon.connectivity_results[name])[0]
+                                if name in mon.connectivity_results else "UNKNOWN")):
                         mon.connectivity_started[name] = now
                         connectivity_tasks[name] = asyncio.create_task(asyncio.to_thread(
                             diagnose_connectivity, label.source_ip, now,

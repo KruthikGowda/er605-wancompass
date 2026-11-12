@@ -21,6 +21,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from netpulse.notifications.durable import AlertOutbox
 from typing import Callable, Protocol
 
 from netpulse.notifications.base import DEVICE_NOTICE_CATEGORY, Notifier
@@ -157,6 +158,8 @@ class TelegramBot(Notifier):
             )
         self.profile = profile
         self.store = store
+        self._alerts = AlertOutbox(store)
+        self._send_retry_after = 0
         self._lock = threading.Lock()
         self.members: dict[str, str] = self._load_members()      # chat id -> display name
         self._invite_until = 0.0
@@ -191,6 +194,10 @@ class TelegramBot(Notifier):
         """Send to one chat, or to every allowed chat when chat is None."""
         self._enqueue(text, chat, markup, None)
 
+    def send_reliable(self, text: str, key: str, critical: bool = False) -> bool:
+        """Persist the latest alert for a key, replacing any queued older incident state."""
+        return self._alerts.enqueue(key, text[:MAX_LEN], self.chat_ids, critical)
+
     def send_categorized(self, text: str, category: str) -> None:
         """Queue a non-identifying alert category for outcome telemetry."""
         if category not in self._category_delivery_counts:
@@ -217,6 +224,8 @@ class TelegramBot(Notifier):
         with self._delivery_lock:
             stats = dict(self._delivery_counts)
         stats["queued"] = self._outbox.qsize()
+        stats.update(self._alerts.stats())
+        stats["queued"] += stats["durable_pending"]
         with self._delivery_lock:
             stats["categories"] = {
                 category: dict(counts)
@@ -262,21 +271,44 @@ class TelegramBot(Notifier):
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = json.load(resp)
         except urllib.error.HTTPError as e:
+            if method == "sendMessage" and e.code == 429:
+                try:
+                    delay = json.loads(e.read(4096)).get("parameters", {}).get("retry_after", 0)
+                    self._send_retry_after = min(3600, max(0, int(delay)))
+                except (ValueError, TypeError, OSError, AttributeError):
+                    self._send_retry_after = 0
             log.warning("telegram %s failed: HTTP %s", method, e.code)
             return None
         except Exception as e:  # noqa: BLE001
             log.warning("telegram %s failed (%s)", method, type(e).__name__)
             return None
-        return data if data.get("ok") else None
+        return data if isinstance(data, dict) and data.get("ok") else None
 
     def _sender(self) -> None:
         while not self._stop.is_set():
-            item = self._outbox.get()
+            self._deliver_pending_alert()
+            try:
+                item = self._outbox.get(timeout=1)
+            except queue.Empty:
+                continue
             text, chat, markup = item[:3]
             category = item[3] if len(item) > 3 else None
             if category is not None:
                 self._record_delivery(category=category, queued=-1)
             self._deliver_message(text, chat, markup, category)
+
+    def _deliver_pending_alert(self) -> None:
+        pending = self._alerts.due(self.chat_ids)
+        if not pending:
+            return
+        key, row = pending
+        target = row["targets"][0]
+        self._send_retry_after = 0
+        ok = self._call("sendMessage", {"chat_id": target, "text": row["text"],
+            "disable_web_page_preview": True, "reply_markup": KEYBOARD}) is not None
+        self._alerts.result(key, row["version"], target, ok, retry_after=self._send_retry_after)
+        if ok:
+            self._record_delivery(accepted=1)
 
     def _deliver_message(self, text: str, chat: str | None, markup: dict | None,
                          category: str | None = None) -> None:

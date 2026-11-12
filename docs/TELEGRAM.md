@@ -45,6 +45,14 @@ The `--add` flow adds another private account to an existing installation. Use i
 sudo python3 tools/telegram_setup.py --add
 ```
 
+## Internet incidents and delivery
+
+Independent source-bound web checks run against Cloudflare and Google. Internet failures require two consecutive checks; partial reachability needs three. Recovery needs two successful checks. The incident state survives service restarts. Ping alerts explicitly describe missing ping replies; those alone do not establish an Internet outage. Confirmed Internet failures and recovery bypass quiet hours; partial reachability respects quiet hours and mute.
+
+Alerts use a bounded SQLite-backed queue through the existing private database. Pending messages survive restarts, retry with backoff, and respect Telegram's rate-limit delay. A newer alert for the same incident key replaces an older pending message, so recovery can supersede an undelivered outage. Retries retain only recipients that have not accepted the message and remove recipients who are no longer authorized. Pending messages expire after 24 hours; the queue holds at most 100 incident keys. Device-activity notices and interactive replies retain their existing ordinary queue.
+
+If both Internet connections fail, Telegram cannot deliver until outbound connectivity returns. The dashboard shows pending alerts and queue storage failures. Telegram API acceptance does not prove receipt or reading; an ambiguous timeout after acceptance can produce a duplicate on retry. Delivery is best effort with durable retries, not exactly once.
+
 ## Troubleshooting
 
 - **Token rejected:** create or copy the token again from your BotFather conversation and enter it only at the hidden prompt. Check outbound HTTPS connectivity.

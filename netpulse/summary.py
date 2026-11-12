@@ -61,6 +61,19 @@ def _label(w: dict) -> str:
 def headline(snapshot: dict) -> dict:
     """One line for the top of the dashboard / first line of a status message."""
     wans = snapshot.get("wans") or []
+    strict = [(w, w.get("connectivity")) for w in wans]
+    if any(c and c.get("web_checks") for _, c in strict):
+        fresh = [(w, c) for w, c in strict if c and c.get("web_checks")
+                 and result_is_fresh(c.get("checked_at"), time.time())]
+        if len(fresh) != len(wans):
+            return {"level": "UNKNOWN", "emoji": "⚪", "text": "Waiting for fresh Internet checks on both connections"}
+        bad = [(w, c) for w, c in fresh if c.get("internet_state") != "ONLINE"]
+        if not bad:
+            return {"level": "HEALTHY", "emoji": "🟢", "text": "Both connections passed independent Internet checks"}
+        level = "UNKNOWN" if any(c.get("internet_state") == "MONITOR_ERROR" for _, c in bad) else (
+            "OFFLINE" if len(bad) == len(wans) and all(c.get("internet_state") != "PARTIAL" for _, c in bad) else "DEGRADED")
+        return {"level": level, "emoji": STATE_EMOJI[level],
+                "text": "; ".join(f"{_label(w)}: {c.get('internet_reason', 'Internet checks failing')}" for w, c in bad)}
     if wans and all(w["state"] == "UNKNOWN" for w in wans) and any(w.get("errors") for w in wans):
         return {"level": "UNKNOWN", "emoji": "⚪", "text": "Monitoring unavailable: check the Pi's probe settings"}
     if not wans or all(w["state"] == "UNKNOWN" for w in wans):
@@ -119,8 +132,9 @@ def status_text(snapshot: dict) -> str:
             def reachability(value):
                 return "reachable" if value is True else "failed" if value is False else "unknown"
 
+            transport = "direct TLS transport" if connectivity.get("web_checks") else "HTTPS"
             checks = [f"direct DNS {reachability(connectivity.get('dns_ok'))}",
-                      f"HTTPS {reachability(connectivity.get('https_ok'))}"]
+                      f"{transport} {reachability(connectivity.get('https_ok'))}"]
             if isinstance(connectivity.get("wan_dns_ok"), bool):
                 checks.insert(1, f"ISP DNS {reachability(connectivity['wan_dns_ok'])}")
             icmp_state = str(connectivity.get("icmp_state", "UNKNOWN")).upper()
@@ -128,6 +142,8 @@ def status_text(snapshot: dict) -> str:
                 icmp_state = "UNKNOWN"
             lines.append(f"   DNS/HTTPS ({_age(checked_age)} ago; ICMP {icmp_state.lower()} at sample): "
                          + " · ".join(checks))
+            if connectivity.get("web_checks"):
+                lines.append("   Internet: " + connectivity.get("internet_reason", "awaiting checks"))
         if w["state"] not in ("HEALTHY", "UNKNOWN"):
             if w.get("reasons"):
                 lines.append(f"   why: {'; '.join(plain_reason(r) for r in w['reasons'])}")

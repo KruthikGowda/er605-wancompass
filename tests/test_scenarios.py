@@ -147,13 +147,13 @@ class Outage(Base):
 
     def test_down_and_back_alerts(self):
         texts = self.s.outbox.texts()
-        down = [(t, x) for t, x, _ in self.s.outbox.sent if x.startswith("🔴 Example ISP B is DOWN")]
+        down = [(t, x) for t, x, _ in self.s.outbox.sent if x.startswith("🔴 Example ISP B: ping checks are not responding")]
         self.assertEqual(len(down), 1, texts)
         # Confirmed within 3 cycles (30 s) of the outage starting.
         self.assertLessEqual(down[0][0] - (self.start + 300), 40)
-        back = [x for x in texts if x.startswith("✅ Example ISP B is back online")]
+        back = [x for x in texts if x.startswith("✅ Example ISP B: ping replies resumed")]
         self.assertEqual(len(back), 1, texts)
-        self.assertRegex(back[0], r"was down for 1[12] min")
+        self.assertRegex(back[0], r"no replies for 1[12] min")
         self.assertFalse(any(x.startswith("🟠 Example ISP B is bad") for x in texts), "recovery must not look like a new problem")
         self.assertFalse(any(x.startswith("🟡 Example ISP B is slow") for x in texts), "no 'slow' before 'down'")
         # The "still settling" message promises a follow-up: it must arrive (not be rate-limited away).
@@ -359,7 +359,7 @@ class QuietHours(Base):
         s.run(40 * 60)
         texts = s.outbox.texts()
         self.assertFalse(any(t.startswith(("🟡 Example ISP A", "🟠 Example ISP A")) for t in texts), texts)
-        self.assertTrue(any(t.startswith("🔴 Example ISP B is DOWN") for t in texts))
+        self.assertTrue(any(t.startswith("🔴 Example ISP B: ping checks are not responding") for t in texts))
 
 
 class WeeklyReport(Base):

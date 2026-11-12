@@ -166,6 +166,14 @@ def make_handler(board: StatusBoard, db_path: str, auth_file: str | None = None)
                     self._send(200, INDEX.read_bytes(), "text/html; charset=utf-8")
                 elif url.path == "/api/status":
                     self._json(board.get())
+                elif url.path == "/api/live":
+                    monitor = board.get_extra("live_monitor")
+                    self._json(monitor.live_history() if monitor else {
+                        "points": [], "updated": None, "interval_seconds": 10, "max_age_seconds": 30})
+                elif url.path in ("/static/dashboard.css", "/static/live.js"):
+                    name = url.path.rsplit("/", 1)[-1]
+                    self._send(200, (INDEX.parent / name).read_bytes(),
+                               "text/css; charset=utf-8" if name.endswith(".css") else "text/javascript; charset=utf-8")
                 elif url.path == "/api/actions":
                     actions = board.get_extra("action_control")
                     state = actions.state() if actions else {

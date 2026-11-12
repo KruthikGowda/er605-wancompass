@@ -13,6 +13,7 @@ import json
 import sqlite3
 import threading
 import time
+import math
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -79,6 +80,11 @@ def fixture_data(now: float | None = None) -> dict[str, dict]:
                    "clients": 8, "control": {"enabled": True,
                                                 "reason": "Demo controls shown for layout review; all writes are denied."}},
     }
+    for index, wan in enumerate(wans):
+        from netpulse.probes.connectivity import ConnectivityResult, WebCheck
+        wan["connectivity"] = ConnectivityResult(now-5, True, True, "Synthetic web checks",
+            icmp_state=wan["state"], web_checks=(WebCheck("Cloudflare", index==0, 204 if index==0 else 302),
+                WebCheck("Google", index==0, 204 if index==0 else 302))).as_dict()
     groups = [{
         "id": 1, "name": "Example Work Group", "members": macs, "reserved_count": 7,
         "blocked_count": 1, "route": "MIXED", "expiry_mixed": False,
@@ -146,7 +152,12 @@ def fixture_data(now: float | None = None) -> dict[str, dict]:
             "undervoltage": False, "undervoltage_occurred": False,
             "backup": {"enabled": False}, "acl_recovery": {"status": "unavailable"},
         }},
-        "/api/history": {"hours": 1, "bucket": 60, "target": "", "points": [], "state_minutes": []},
+        "/api/live": {"updated": now, "interval_seconds": 10, "max_age_seconds": 30,
+            "points": [{"ts":now-offset,"wan":wan,"rtt_ms":round(base+3*math.sin(offset/40),2),
+                        "loss_pct":0 if wan=="WAN1" else 20 if 150<offset<240 else 0,
+                        "jitter_ms":round(1+abs(math.sin(offset/40))*2,2)}
+                       for offset in range(890,-1,-10) for wan,base in (("WAN1",12),("WAN2",30))]},
+        "/api/history": {"hours": 1, "bucket": 60, "target": "", "points": [], "state_minutes": {}},
         "/api/events": [],
         "/api/decisions": {"total": 0, "recommendations": [], "omitted_recommendations": 0},
         "/api/speedtests": {"running": False, "results": [], "usual": {},
@@ -303,6 +314,10 @@ class PreviewServer:
                     html = INDEX.read_text(encoding="utf-8").replace("<body>", "<body>" + DEMO_BANNER, 1)
                     self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
                     return
+                if path in ("/static/dashboard.css", "/static/live.js"):
+                    name=path.rsplit("/",1)[-1]
+                    self._send(200,(INDEX.parent/name).read_bytes(),"text/css" if name.endswith("css") else "text/javascript")
+                    return
                 if path == "/api/report.csv":
                     self._send(200, b"timestamp,wan,state\nDemo,WAN1,HEALTHY\n",
                                "text/csv; charset=utf-8")
@@ -356,6 +371,21 @@ class PreviewServer:
                                "application/json; charset=utf-8")
                     return
                 if path in owner.fixture:
+                    if path in ("/api/status", "/api/live"):
+                        import copy
+                        item = copy.deepcopy(owner.fixture[path])
+                        delta = time.time() - owner.fixture["/api/status"]["updated"]
+                        def advance(value):
+                            if isinstance(value,dict):
+                                for key, child in value.items():
+                                    if key in ("updated","checked_at","ts","state_since") and isinstance(child,(int,float)):
+                                        value[key] = child + delta
+                                    else: advance(child)
+                            elif isinstance(value,list):
+                                for child in value: advance(child)
+                        advance(item)
+                        self._send(200,json.dumps(item).encode("utf-8"),"application/json; charset=utf-8")
+                        return
                     body = json.dumps(owner.fixture[path], separators=(",", ":")).encode("utf-8")
                     self._send(200, body, "application/json; charset=utf-8")
                     return
