@@ -218,10 +218,46 @@ The pilot starts an independent Pi cleanup watchdog before stopping the NetPulse
 The optional collector reads `ifstat/switch`, `ifstat/list`, `ipstats/setting`,
 `ipstats/list`, `dhcps/client`, and public uptime. `WAN/LAN2` maps to WAN2;
 interface `rx_bytes`/`tx_bytes` are cumulative download/upload observations.
-Native `*_bps` units and refresh timing are not used as verified rates: rates
-come from byte deltas over measured intervals. Device direction stays in router
-RX/TX terminology. Duplicate or changing DHCP identities are excluded.
+Native `rx_bps`/`tx_bps` are integer decimal kB/s on the tested firmware. The
+conversion is `Mbps = kB/s * 0.008`. Changes in cumulative WAN bytes divided by the
+native rate corroborated an approximately 30-second reporting window. Primary
+rates and their history use these fields; byte-delta interval averages remain a
+separate view and determine daily usage. Device direction stays in router RX/TX
+terminology. Duplicate or changing DHCP identities are excluded.
 
-Known transfers were incompletely reflected on tested firmware. These counters
-must not be described as complete household or ISP accounting. See
-[configuration and coverage semantics](CONFIGURATION.md#router-reported-bandwidth-observations).
+### Counter acceptance and device accounting investigation
+
+Longer source-bound tests corrected the initial immediate-read interpretation:
+WAN counters can stay identical until the next reporting batch. Their refreshed
+increases covered the known transfer sizes, although simultaneous background
+traffic prevents proving exact capture. Per-IP counts remained incomplete for
+both the Pi's normal DHCP address and its policy-routed probe alias. A 2 MB
+single-flow download added about 7 KB RX to the primary-address counter, whereas
+16 shorter downloads totaling 2 MB added about 100 KB. Each address had exactly
+one row. This makes duplicate parsing, aliases alone, and unit conversion
+insufficient explanations; the pattern is consistent with flow-offload bypass.
+No packet-processing configuration was changed to establish causality.
+
+[TP-Link's older offload explanation](https://community.tp-link.com/en/smart-home/forum/topic/502180)
+confirms a client-statistics limitation on earlier ER605 hardware/firmware. It is
+supporting evidence, not an exact-version acceptance result.
+
+As checked on 2026-11-12, the
+[2.4.10 release](https://support.omadanetworks.com/us/download/firmware/er605/v2)
+explicitly includes v2.30 and lists controller 6.3.0 compatibility. Its published
+fixes do not claim complete accelerated per-client accounting. The earlier
+[2.4.3 notes](https://static.tp-link.com/upload/firmware/2026/202606/20260603/ER605%28UN%29_V2_2.4.3_Release%20Note.pdf)
+mention reduced traffic-statistics resource consumption, not an accuracy fix.
+Firmware updates are not part of counter collection or automatic deployment.
+
+The [v2.30 datasheet](https://static.tp-link.com/upload/product-overview/2025/202511/20251117/ER605%28UN%292.30_Datasheet.pdf)
+includes DPI. The [current DPI guide](https://support.omadanetworks.com/in/document/13241/)
+describes standalone DPI/logging and software-controller client analytics.
+Some hardware controllers omit the User view. Omada adoption alone is not proof
+of complete accounting; DPI/logging needs a separate test, including normal DHCP
+clients, unknown applications, both directions/WANs, refresh delays, and CPU/speed
+impact. No blocking rules are needed for an analytics-only trial. Exact settings
+must be read back, privately backed up, and restored after a bounded trial unless
+the owner explicitly approves keeping them.
+
+See [configuration and coverage semantics](CONFIGURATION.md#router-reported-bandwidth-observations).

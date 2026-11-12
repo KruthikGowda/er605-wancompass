@@ -14,8 +14,56 @@ from netpulse.storage import sqlite
 
 INTERVAL = 30
 DEVICE_INTERVAL = 60
-LIMITATION = ("Router-reported counters may omit accelerated or policy-routed traffic. "
-              "Observed totals are not complete ISP usage or billing records. Device counters may include routed LAN traffic and are not split by WAN.")
+NATIVE_MAX_AGE = 75
+LIMITATION = ("WAN rates are the router's approximately 30-second averages; daily totals use byte-counter deltas. "
+              "WAN completeness is not certified. Per-device counters missed most controlled test traffic: device rankings are incomplete, not household usage shares or per-WAN attribution.")
+
+
+class NativeWanRates:
+    """Decode KB/s, retain cached readings without inventing a new sample or zero."""
+    def __init__(self,store):
+        self.store=store
+        self.state={}
+
+    @staticmethod
+    def kbps(value):
+        parsed=DeviceTraffic._counter_value(value)
+        return parsed if parsed is not None and parsed<=250_000 else None
+
+    def accept(self,rows,now,uptime):
+        result={};samples=[]
+        for name,row in rows.items():
+            down,up=row['native_down_kBps'],row['native_up_kBps']
+            if down is None or up is None:
+                self.state.pop(name,None)
+                result[name]={'available':False,'reason':'Built-in WAN rate fields are missing or invalid'}
+                continue
+            fingerprint=(row['down'],row['up'],down,up,row['rx_packets'],row['tx_packets'])
+            previous=self.state.get(name)
+            reset=bool(previous and (uptime<previous['uptime'] or row['down']<previous['down'] or row['up']<previous['up']))
+            changed=previous is None or fingerprint!=previous['fingerprint']
+            idle=down==0 and up==0
+            if changed or idle or reset:
+                state={'fingerprint':fingerprint,'uptime':uptime,'down':row['down'],'up':row['up'],
+                       'rate_at':now,'down_mbps':down*.008,'up_mbps':up*.008,
+                       'native_down_kBps':down,'native_up_kBps':up,'refresh_confirmed':bool(previous and changed and not reset),
+                       'idle':idle,'reset':reset}
+                self.state[name]=state
+                if not reset:samples.append({'wan':name,**state})
+            else:
+                state=previous
+            age=now-state['rate_at']
+            available=not state['reset'] and 0<=age<=NATIVE_MAX_AGE
+            reason=('Router restarted or counters reset; awaiting a new rate window' if state['reset'] else
+                    'Built-in rate has not changed; its freshness is unconfirmed' if not available else
+                    'Router reports idle; a separate refresh cannot be observed' if idle else
+                    'Retaining the previous router rate while its cached counters refresh' if not changed else
+                    'Built-in router rate; approximately 30-second average')
+            public={k:v for k,v in state.items() if k not in ('fingerprint','uptime','down','up','reset')}
+            result[name]={**public,'available':available,'reason':reason,'native_age_seconds':age}
+        for name in set(self.state)-set(rows):self.state.pop(name,None)
+        self.store.record_native(samples,now)
+        return result
 
 
 class UsageCollector:
@@ -23,6 +71,7 @@ class UsageCollector:
         self.watch,self.path,self.wans=watch,path,list(wans)
         self.clock,self.monotonic=clock,monotonic
         self.store=UsageStore(path)
+        self.native=NativeWanRates(self.store)
         self.guard=DeviceTraffic(watch,clock=clock,monotonic=monotonic)
         self._lock=threading.RLock()
         self._next_devices=0
@@ -30,6 +79,7 @@ class UsageCollector:
         self._retry_after=0
         self._status={'available':False,'reason':'Waiting for the first router counter sample','sampled_at':None}
         self._wan_rates={}
+        self._counter_rates={}
         self._device_rates={}
         self._device_status='Waiting for a fresh device counter sample'
 
@@ -49,7 +99,11 @@ class UsageCollector:
             up=DeviceTraffic._counter_value(row.get('tx_bytes'))
             if down is None or up is None:continue
             result[name]={'kind':'wan','identity':name,'down':down,'up':up,'binding':name,
-                          'defer':bool(row.get('rx_bps') or row.get('tx_bps'))}
+                          'native_down_kBps':NativeWanRates.kbps(row.get('rx_bps')),
+                          'native_up_kBps':NativeWanRates.kbps(row.get('tx_bps')),
+                          'rx_packets':DeviceTraffic._counter_value(row.get('rx_pkts')),
+                          'tx_packets':DeviceTraffic._counter_value(row.get('tx_pkts')),
+                          'defer':bool(NativeWanRates.kbps(row.get('rx_bps')) or NativeWanRates.kbps(row.get('tx_bps')))}
         return result
 
     def poll(self):
@@ -72,6 +126,7 @@ class UsageCollector:
                     if DeviceTraffic._status(client.get('ifstat','switch')) is not True:
                         self._unavailable('ER605 interface statistics are disabled or unavailable');return
                     wan=self.wan_counters(client.get('ifstat','list'),self.wans)
+                    wan_time,wan_mono=self.clock(),self.monotonic()
                     devices_due=mono>=self._next_devices
                     device_rows=[];device_reason=''
                     if devices_due:
@@ -86,13 +141,15 @@ class UsageCollector:
             sampled=self.clock()
             missing=set(self.wans)-set(wan)
             if missing:self.store.invalidate('wan',missing)
-            rates=self.store.accept(list(wan.values())+device_rows,sampled,self.monotonic(),uptime_after,
-                                    device_poll=devices_due)
+            rates=self.store.accept(list(wan.values()),wan_time,wan_mono,uptime_before)
+            rates.update(self.store.accept(device_rows,sampled,self.monotonic(),uptime_after,device_poll=devices_due))
+            native=self.native.accept(wan,wan_time,uptime_before)
             with self._lock:
-                self._wan_rates={name:rates.get(('wan',name),{'available':False,'reason':'WAN counters are missing',
+                self._counter_rates={name:rates.get(('wan',name),{}) for name in self.wans}
+                self._wan_rates={name:native.get(name,{'available':False,'reason':'WAN counters are missing',
                     'down_mbps':None,'up_mbps':None}) for name in self.wans}
                 self._status={'available':any(r['available'] for r in self._wan_rates.values()),
-                    'reason':'','sampled_at':sampled}
+                    'reason':'','sampled_at':wan_time}
                 if devices_due:
                     self._next_devices=self.monotonic()+DEVICE_INTERVAL
                     self._device_rates={mac:{**rates[('device',mac)],'sampled_at':sampled}
@@ -137,6 +194,7 @@ class UsageCollector:
         result=self.store.read(day,hours,now)
         with self._lock:
             status=dict(self._status);rates={k:dict(v) for k,v in self._wan_rates.items()}
+            counter_rates={k:dict(v) for k,v in self._counter_rates.items()}
             devices={k:dict(v) for k,v in self._device_rates.items()};device_reason=self._device_status
         age=None if status['sampled_at'] is None else now-status['sampled_at']
         fresh=bool(age is not None and 0<=age<=INTERVAL*2.5 and status['available'])
@@ -150,10 +208,24 @@ class UsageCollector:
                     'coverage_pct':min(100,100*row.get('seconds',0)/expected) if expected else 0}
         result.update(status,available=fresh,age_seconds=age,interval_seconds=INTERVAL,device_interval_seconds=DEVICE_INTERVAL,
             today=dt.date.fromtimestamp(now).isoformat(),
-            limitation=LIMITATION,accounting_complete=False,timezone=time.tzname[0],expected_seconds=expected,
-            wans=[{'wan':name,**rates.get(name,{}),'stale':not fresh,'daily':totals('wan',name)} for name in self.wans])
+            limitation=LIMITATION,accounting_complete=False,device_accounting_complete=False,
+            device_limitation='Incomplete device counters: controlled transfers were mostly missing. Rankings cannot identify the true largest users.',
+            native_window_seconds=30,native_max_age_seconds=NATIVE_MAX_AGE,native_unit='decimal kB/s',
+            timezone=time.tzname[0],expected_seconds=expected,
+            wans=[{'wan':name,**rates.get(name,{}),'counter_average':counter_rates.get(name,{}),
+                   'stale':not fresh,'daily':totals('wan',name)} for name in self.wans])
+        for row in result['wans']:
+            rate_age=now-row['rate_at'] if 'rate_at' in row else None
+            row['native_age_seconds']=rate_age
+            if rate_age is not None and not 0<=rate_age<=NATIVE_MAX_AGE:
+                row.update(available=False,stale=True,reason='Built-in rate freshness is unconfirmed; waiting for a changed counter snapshot')
+            if not row.get('available'):
+                row.update(down_mbps=None,up_mbps=None)
+        result['available']=bool(fresh and any(w.get('available') for w in result['wans']))
         if not fresh:
-            for row in result['wans']:row.update(available=False,down_mbps=None,up_mbps=None)
+            for row in result['wans']:
+                row.update(available=False,down_mbps=None,up_mbps=None)
+                row['counter_average'].update(available=False,down_mbps=None,up_mbps=None)
         labels=sqlite.device_labels(self.path)
         with closing(sqlite._ro(self.path)) as db:
             names={mac:name for mac,name in db.execute('SELECT mac,name FROM known_devices')}

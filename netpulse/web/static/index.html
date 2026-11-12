@@ -323,12 +323,13 @@
   <section aria-label="Router-reported bandwidth usage" class="usage-section">
     <div class="live-toolbar"><h2>Bandwidth &amp; data usage</h2><div class="live-tools">
       <label>Usage date <input type="date" id="usage-day"></label>
+      <label>Graph source <select id="usage-source"><option value="native">Built-in router rate</option><option value="counter">Byte-counter average</option></select></label>
       <label>Live graph window <select id="usage-window"><option value="0.25">15 minutes</option><option value="1" selected>1 hour</option><option value="24">24 hours</option></select></label>
     </div></div>
     <p class="usage-caution" id="usage-limitation">Loading router counter capabilities…</p>
     <div class="live-grid" id="usage-wans"></div>
     <p class="telemetry-note" id="usage-status" role="status">Waiting for router counters…</p>
-    <div class="live-toolbar"><h2>Devices using the most</h2><div class="live-tools">
+    <div class="live-toolbar"><h2>Device counter observations</h2><div class="live-tools">
       <label>Rank by <select id="usage-ranking"><option value="today">Observed data on selected date</option><option value="now">Current router-reported rate</option></select></label>
     </div></div>
     <div class="card"><p class="telemetry-note" id="usage-device-note"></p>

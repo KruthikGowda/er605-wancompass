@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS usage_wan_intervals (
  PRIMARY KEY(identity,ts));
 CREATE INDEX IF NOT EXISTS usage_interval_ts ON usage_wan_intervals(ts);
 CREATE INDEX IF NOT EXISTS usage_daily_day ON usage_daily(day);
+CREATE TABLE IF NOT EXISTS usage_wan_rates (
+ identity TEXT, ts REAL, down_mbps REAL, up_mbps REAL,
+ PRIMARY KEY(identity,ts));
+CREATE INDEX IF NOT EXISTS usage_rate_ts ON usage_wan_rates(ts);
 """
 MAX_GAP = 180
 MAX_BPS = 2_000_000_000
@@ -126,6 +130,12 @@ class UsageStore:
             else:
                 db.executemany('DELETE FROM usage_baselines WHERE kind=? AND identity=?',[(kind,i) for i in identities])
 
+    def record_native(self, rows, now):
+        with connection(self.path) as db:
+            db.executemany('INSERT OR IGNORE INTO usage_wan_rates VALUES(?,?,?,?)',
+                           [(r['wan'],now,r['down_mbps'],r['up_mbps']) for r in rows])
+            db.execute('DELETE FROM usage_wan_rates WHERE ts<?',(now-2*86400,))
+
     def read(self,day,hours=1,now=None):
         day_bounds(day)  # Reject malformed dates before running queries.
         with connection(self.path) as db:
@@ -151,4 +161,12 @@ class UsageStore:
             history=[{'wan':wan,'ts':stamp,'down_mbps':d*8/seconds/1e6,
                       'up_mbps':u*8/seconds/1e6,'seconds':seconds}
                      for (wan,stamp),(d,u,seconds) in sorted(buckets.items(),key=lambda item:item[0][1])]
-        return {'daily':daily,'points':history,'bucket':bucket,'day':day}
+            native_bucket=max(30,bucket)
+            native=[dict(r) for r in db.execute('''SELECT identity AS wan,
+                CAST(ts/? AS INTEGER)*? AS ts,AVG(down_mbps) AS down_mbps,
+                AVG(up_mbps) AS up_mbps,COUNT(*) AS samples
+                FROM usage_wan_rates WHERE ts>=? AND ts<=?
+                GROUP BY identity,CAST(ts/? AS INTEGER) ORDER BY ts''',
+                (native_bucket,native_bucket,since,until,native_bucket))]
+        return {'daily':daily,'points':native,'counter_points':history,
+                'bucket':native_bucket,'counter_bucket':bucket,'day':day}

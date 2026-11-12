@@ -86,7 +86,7 @@ class UsageStorageTests(unittest.TestCase):
         self.assertFalse(self.accept([row(200,100)],30)[('wan','WAN1')]['available'])
     def test_history_distributes_slow_refresh_over_observed_buckets(self):
         self.accept([row()]);self.accept([row(6000100,3000050)],60)
-        points=self.s.read('2026-11-12',.25,now=self.now+60)['points']
+        points=self.s.read('2026-11-12',.25,now=self.now+60)['counter_points']
         self.assertEqual(sum(p['seconds'] for p in points),60)
         self.assertTrue(all(p['seconds']<=15 for p in points))
         self.assertTrue(all(p['down_mbps']==.8 for p in points))
@@ -100,7 +100,7 @@ class Client:
         self.calls.append((module,form))
         if self.fail=='auth':raise RouterAuthError('private data')
         if module=='ifstat' and form=='switch':return {'status':'on'}
-        if module=='ifstat':return [{'interface':name,'rx_bytes':self.value,'tx_bytes':self.value//2} for name in ('WAN1','WAN/LAN2')]
+        if module=='ifstat':return [{'interface':name,'rx_bytes':self.value,'tx_bytes':self.value//2,'rx_bps':125,'tx_bps':50} for name in ('WAN1','WAN/LAN2')]
         if module=='dhcps':return [{'macaddr':MAC,'ipaddr':IP}]*(2 if self.duplicate else 1)
         if module=='ipstats' and self.fail=='device':raise ValueError('private data')
         if form=='setting':return {'status':'on'}
@@ -160,3 +160,57 @@ class UsageHttpTests(unittest.TestCase):
         self.board.set_extra('usage_collector',ReadOnly())
         self.assertEqual(self.request('GET','/api/usage?hours=nan')[0],400)
         self.assertTrue(self.request('GET','/api/usage')[1]['enabled'])
+
+class NativeWanRateTests(unittest.TestCase):
+    def setUp(self):
+        from netpulse.router.usage import NativeWanRates
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.store=UsageStore(str(Path(self.tmp.name)/'rate.db'));self.native=NativeWanRates(self.store)
+        self.now=day_bounds('2026-11-12')[0]+3600
+    def rows(self,rx=1000,tx=500,down=100,up=50):
+        return UsageCollector.wan_counters([{'interface':'WAN1','rx_bytes':down,'tx_bytes':up,'rx_bps':rx,'tx_bps':tx}],['WAN1'])
+    def accept(self,seconds=0,**kw):return self.native.accept(self.rows(**kw),self.now+seconds,1000+seconds)['WAN1']
+    def test_native_decimal_kilobytes_convert_to_megabits(self):
+        r=self.accept();self.assertEqual((r['down_mbps'],r['up_mbps']),(8,4))
+        self.assertEqual(r['native_down_kBps'],1000)
+        self.assertTrue(r['available']);self.assertFalse(r['refresh_confirmed'])
+    def test_repeated_cached_snapshot_does_not_add_history_or_zero(self):
+        self.accept();r=self.accept(30)
+        self.assertEqual(r['rate_at'],self.now);self.assertEqual(r['down_mbps'],8)
+        self.assertIn('Retaining',r['reason'])
+        points=self.store.read('2026-11-12',now=self.now+30)['points']
+        self.assertEqual(sum(p['samples'] for p in points),1)
+    def test_changed_counter_snapshot_confirms_refresh(self):
+        self.accept();r=self.accept(30,down=10000)
+        self.assertTrue(r['refresh_confirmed']);self.assertEqual(r['rate_at'],self.now+30)
+    def test_stuck_nonzero_rate_becomes_unavailable(self):
+        self.accept();self.assertFalse(self.accept(76)['available'])
+        self.assertTrue(self.accept(90,down=200)['available'])
+    def test_valid_idle_zero_is_distinct_from_stuck_nonzero(self):
+        self.accept(rx=0,tx=0);r=self.accept(90,rx='0',tx='0')
+        self.assertTrue(r['available']);self.assertTrue(r['idle']);self.assertIn('idle',r['reason'])
+        self.assertEqual(r['down_mbps'],0);self.assertFalse(r['refresh_confirmed'])
+    def test_missing_or_malformed_native_rate_does_not_become_zero(self):
+        for value in (None,True,-1,'NaN',float('inf'),250001):
+            with self.subTest(value=value):
+                self.assertFalse(self.accept(rx=value)['available'])
+    def test_rate_reset_awaits_next_changed_window(self):
+        self.accept();self.assertFalse(self.accept(30,down=1,up=1)['available'])
+        self.assertFalse(self.accept(60,down=1,up=1)['available'])
+        self.assertTrue(self.accept(90,down=200,up=100)['available'])
+    def test_reboot_invalidates_native_window(self):
+        self.accept();r=self.native.accept(self.rows(),self.now+30,1)['WAN1']
+        self.assertFalse(r['available']);self.assertIn('restarted',r['reason'])
+    def test_missing_interface_drops_its_cached_rate(self):
+        self.accept();self.native.accept({},self.now+30,1030)
+        self.assertEqual(self.native.state,{})
+    def test_native_history_and_byte_history_have_explicit_sources(self):
+        self.accept();self.store.accept([row()],self.now,100,1000)
+        self.store.accept([row(200,100)],self.now+30,130,1030)
+        report=self.store.read('2026-11-12',now=self.now+30)
+        self.assertEqual(report['points'][0]['down_mbps'],8)
+        self.assertLess(report['counter_points'][0]['down_mbps'],1)
+        self.assertEqual(report['bucket'],30)
+    def test_native_history_survives_restart_and_does_not_add_daily_bytes(self):
+        self.accept();store=UsageStore(self.store.path);report=store.read('2026-11-12',now=self.now)
+        self.assertEqual(report['points'][0]['down_mbps'],8);self.assertEqual(report['daily'],[])

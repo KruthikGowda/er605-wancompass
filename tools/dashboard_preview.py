@@ -128,9 +128,9 @@ def fixture_data(now: float | None = None) -> dict[str, dict]:
     return {
         "/api/usage": {"enabled":True,"available":True,"sampled_at":now-2,"interval_seconds":30,
             "device_interval_seconds":60,"timezone":time.tzname[0],"day":dt.date.fromtimestamp(now).isoformat(),
-            "today":dt.date.fromtimestamp(now).isoformat(),"ranking":"today","bucket":30,"reason":"",
+            "today":dt.date.fromtimestamp(now).isoformat(),"ranking":"today","bucket":30,"counter_bucket":30,"native_window_seconds":30,"reason":"",
             "limitation":"Router-reported observations may omit traffic. Totals are not complete ISP accounting; devices are not split by WAN.",
-            "wans":[{"wan":name,"available":True,"down_mbps":35/(i+1),"up_mbps":4/(i+1),
+            "wans":[{"wan":name,"available":True,"down_mbps":35/(i+1),"up_mbps":4/(i+1),"native_down_kBps":4375/(i+1),"native_up_kBps":500/(i+1),"reason":"Built-in router rate; approximately 30-second average", "counter_average":{"available":True,"down_mbps":30/(i+1),"up_mbps":3/(i+1),"sample_seconds":31},
                 "daily":{"down_bytes":2300000000//(i+1),"up_bytes":340000000//(i+1),"observed_seconds":3600,"coverage_pct":14.5,"first_observed":now-3600}}
                 for i,name in enumerate(("WAN1","WAN2"))],
             "points":[{"wan":name,"ts":now-30*j,"seconds":30,"down_mbps":max(0,(30+15*math.sin(j/6))/(i+1)),"up_mbps":max(0,(4+2*math.cos(j/9))/(i+1))}
@@ -303,6 +303,8 @@ class PreviewServer:
         finally:
             db.close()
         self.fixture = fixture_data()
+        import copy
+        self.fixture["/api/usage"]["counter_points"]=copy.deepcopy(self.fixture["/api/usage"]["points"])
         owner = self
 
         class Handler(BaseHTTPRequestHandler):

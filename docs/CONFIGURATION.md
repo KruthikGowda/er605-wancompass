@@ -100,14 +100,30 @@ They are not per-WAN device accounting and may include routed LAN traffic. The
 date picker selects daily observations; live graphs always end at the present.
 Days follow the Pi local timezone. History lasts two days; daily totals 400 days.
 
-**Completeness is not established.** On an owner-authorized ER605 v2.30 test,
-firmware 2.3.3 Build 20251029 Rel.18054, known source-bound transfers were not
-fully reflected in native interface/per-IP counters. SNMP logical interfaces
-did not establish complete accounting either. These are router observations,
-not verified ISP totals, line capacity, or billing records. The cause is
-unconfirmed; acceleration/policy paths may be omitted. This warning stays visible.
-Do not disable acceleration or enable QoS just to improve counters without
-separate owner approval and throughput tests.
+**WAN and device counters have different evidence.** Longer controlled tests on
+ER605 v2.30 firmware 2.3.3 Build 20251029 Rel.18054 showed WAN counters refreshing
+in approximately 30-second batches, with increases sufficient to cover the known
+payloads plus background traffic. Earlier immediate reads were too soon. This is
+not an exact accounting certification. In contrast, both the Pi DHCP address and
+its probe alias missed most test bytes in per-IP counters after refresh.
+
+The dashboard's primary rates now use the router's `rx_bps`/`tx_bps` fields, which
+are decimal kilobytes per second despite the names: multiply by 0.008 for Mbps.
+These are approximately 30-second averages, not speed tests or available capacity.
+The graph source selector separately offers byte-counter interval averages.
+Repeated nonzero cached snapshots retain their original sample time and do not
+create a fresh point or zero. After 75 seconds without an observable change,
+current native rates are unavailable. Reported idle zeroes are labeled because a
+separate cache refresh cannot be observed during inactivity. Native graph history
+is retained for two days; pre-existing byte history remains in counter-average mode.
+Daily usage always comes from accepted byte deltas, never integrated rate estimates.
+
+Device rankings remain explicitly incomplete, may include routed LAN traffic,
+and are not per-WAN household shares. Hardware flow offload is a likely cause,
+supported by vendor guidance and the larger fraction counted for short TCP flows,
+but was not isolated by changing the router's packet-processing settings. Do not
+disable acceleration or enable DPI/QoS without separate owner approval and a
+bounded throughput/accounting acceptance test.
 
 Coverage is time with accepted counter deltas divided by elapsed time in the day;
 it does not measure the fraction of packets counted. First baselines, reboots,
