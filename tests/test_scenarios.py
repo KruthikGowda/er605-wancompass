@@ -37,6 +37,19 @@ class Base(unittest.TestCase):
 
 
 class SteadyDay(Base):
+    def test_missing_probe_address_exposes_unknown_instead_of_packet_loss(self):
+        s = self.scenario(local(12), {"WAN1": lambda _t: Condition(
+            local_error="Cannot assign requested address")}, telegram={"digest_time": ""})
+        s.run(60)
+        snapshot = s.board.get()
+        failed = next(w for w in snapshot["wans"] if w["name"] == "WAN1")
+        self.assertEqual(failed["state"], "UNKNOWN")
+        self.assertEqual(snapshot["headline"]["level"], "UNKNOWN")
+        for key in ("loss_pct", "rtt_ms", "jitter_ms", "score", "availability_pct", "rtt_ratio"):
+            self.assertIsNone(failed[key], key)
+        self.assertEqual(failed["targets"], [])
+        self.assertIn("Cannot assign requested address", failed["errors"])
+
     def test_all_quiet_when_both_healthy(self):
         s = self.scenario(local(12), telegram={"digest_time": ""})
         s.run(30 * 60)

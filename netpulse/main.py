@@ -2310,12 +2310,12 @@ class Monitor:
                     "source_ip": labels[n].source_ip,
                     "state": e.state.value,
                     "state_since": self.trackers[n].state_since,
-                    "score": e.score,
-                    "loss_pct": e.metrics.loss_pct,
-                    "rtt_ms": e.metrics.rtt_ms,
-                    "jitter_ms": e.metrics.jitter_ms,
-                    "availability_pct": e.metrics.availability_pct,
-                    "rtt_ratio": e.rtt_ratio,
+                    "score": e.score if e.state != State.UNKNOWN else None,
+                    "loss_pct": e.metrics.loss_pct if e.state != State.UNKNOWN else None,
+                    "rtt_ms": e.metrics.rtt_ms if e.state != State.UNKNOWN else None,
+                    "jitter_ms": e.metrics.jitter_ms if e.state != State.UNKNOWN else None,
+                    "availability_pct": e.metrics.availability_pct if e.state != State.UNKNOWN else None,
+                    "rtt_ratio": e.rtt_ratio if e.state != State.UNKNOWN else None,
                     "reasons": e.reasons,
                     "why": [summary.plain_reason(r) for r in e.reasons],
                     "errors": e.errors,
@@ -2327,7 +2327,7 @@ class Monitor:
                             self.connectivity_results[n].checked_at, now)
                         else None
                     ),
-                    "targets": [t.__dict__ for t in e.metrics.targets],
+                    "targets": [t.__dict__ for t in e.metrics.targets] if e.state != State.UNKNOWN else [],
                 }
                 for n, e in evals.items()
             ],

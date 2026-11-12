@@ -1636,7 +1636,8 @@ function renderISPs(s) {
   $("isps").innerHTML = s.wans.map(w => {
     const stateAge = w.state_since == null ? null : now - Number(w.state_since);
     const since = stateAge != null && Number.isFinite(stateAge) && stateAge >= 0 && w.state !== "UNKNOWN"
-      ? `${STATE_WORD[w.state]} for ${duration(stateAge)}` : "Collecting data";
+      ? `${STATE_WORD[w.state]} for ${duration(stateAge)}`
+      : w.errors && w.errors.length ? "The Pi cannot send measurements" : "Collecting data";
     const reasons = w.why || w.reasons || [];
     const why = reasons.length && w.state !== "HEALTHY" && w.state !== "UNKNOWN"
       ? `<li>Why: ${esc(reasons.join("; "))}</li>` : "";
@@ -1655,7 +1656,7 @@ function renderISPs(s) {
       </div>
       <div class="big"><b>${fmt(w.rtt_ms)}</b><span>ms · ${esc(speedWord(w))}</span></div>
       <ul class="facts">
-        <li>${esc(lossWords(w.loss_pct))}</li>
+        <li>${esc(w.state === "UNKNOWN" ? "Measurement unavailable" : lossWords(w.loss_pct))}</li>
         ${w.jitter_ms != null ? `<li>${esc(jitterWords(w.jitter_ms))} (${fmt(w.jitter_ms, 1)} ms variation)</li>` : ""}
         <li class="soft">${esc(since)}</li>
         ${why}${errors}${connectivity}
@@ -1787,25 +1788,30 @@ async function refreshHistory() {
   try { h = await getJSON(`/api/history?hours=${hours}&target=${encodeURIComponent(server)}`); } catch (e) { return; }
   const names = order.length ? order : [...new Set(h.points.map(p => p.wan))];
   $("legend").innerHTML = names.map(n => `<span><i style="background:${colorOf(n)}"></i>${esc(labelOf(n))}</span>`).join("");
-  drawChart(names.map(wan => ({wan, points: h.points.filter(p => p.wan === wan)})), h.bucket);
+  const until = Date.now() / 1000;
+  drawChart(names.map(wan => ({wan, points: h.points.filter(p => p.wan === wan)})), h.bucket,
+    {since: until - h.hours * 3600, until});
   $("chart-note").textContent = metric === "rtt_ms" ? "Lower is better" : "Lower is better · 0% is perfect";
   $("totals").innerHTML = names.map(wan => {
     const m = h.state_minutes[wan] || {}, total = Object.values(m).reduce((a, b) => a + b, 0);
-    if (!total) return "";
-    const pct = n => (100 * n / total).toFixed(1) + "%";
+    const known = total - (m.UNKNOWN || 0);
+    const pct = n => known ? (100 * n / known).toFixed(1) + "%" : "unavailable";
+    const coverage = Math.min(100, 100 * total / (h.hours * 60)).toFixed(1);
     const bits = [["DEGRADED", "slow"], ["BAD", "bad"], ["OFFLINE", "down"]].filter(([k]) => m[k]).map(([k, w]) => `${w} ${duration(m[k] * 60)}`);
     return `<div class="total" style="--c:${colorOf(wan)}"><b>${esc(labelOf(wan))}</b>
-      Online ${pct(total - (m.OFFLINE || 0))} · healthy ${pct(m.HEALTHY || 0)}
-      <div class="soft">${bits.length ? bits.join(" · ") : "No problems in this period"}</div></div>`;
+      Observed online ${pct(known - (m.OFFLINE || 0))} · healthy ${pct(m.HEALTHY || 0)}
+      <div class="soft">Measurement coverage ${coverage}% · ${total} recorded minutes of ${h.hours * 60}</div>
+      <div class="soft">${bits.length ? bits.join(" · ") : known ? "No problems in the recorded measurements" : "No confirmed health measurements"}</div></div>`;
   }).join("");
 }
 
-function drawChart(series, bucket) {
+function drawChart(series, bucket, range) {
   const svg = $("chart"), W = svg.clientWidth || 800, H = 220, L = 38, R = 10, T = 10, B = 24, key = metric;
   const all = series.flatMap(s => s.points.filter(p => p[key] != null));
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   if (!all.length) { svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" fill="${css("--soft")}" font-size="14">No history yet: check back in a few minutes</text>`; return; }
-  const t0 = Math.min(...all.map(p => p.ts)), t1 = Math.max(Math.max(...all.map(p => p.ts)), t0 + 60);
+  const t0 = range ? range.since : Math.min(...all.map(p => p.ts));
+  const t1 = range ? range.until : Math.max(Math.max(...all.map(p => p.ts)), t0 + 60);
   let vmax = Math.max(...all.map(p => p[key]));
   vmax = key === "loss_pct" ? Math.max(5, Math.ceil(vmax / 5) * 5) : Math.max(20, Math.ceil(vmax / 20) * 20);
   const x = t => L + (W - L - R) * (t - t0) / (t1 - t0), y = v => T + (H - T - B) * (1 - v / vmax);
@@ -1831,7 +1837,9 @@ function drawChart(series, bucket) {
     const t = Math.round((t0 + (px - L) / (W - L - R) * (t1 - t0)) / bucket) * bucket;
     const rows = series.map(s => {
       let best = null; for (const p of s.points) if (!best || Math.abs(p.ts - t) < Math.abs(best.ts - t)) best = p;
-      return best && best[key] != null ? `${esc(labelOf(s.wan))}: ${fmt(best[key], key === "rtt_ms" ? 0 : 1)} ${unit}` : null;
+      return best && best[key] != null && Math.abs(best.ts - t) <= bucket * 1.5
+        ? `${esc(labelOf(s.wan))}: ${fmt(best[key], key === "rtt_ms" ? 0 : 1)} ${unit}`
+        : `${esc(labelOf(s.wan))}: no measurement`;
     }).filter(Boolean);
     cursor.setAttribute("x1", x(t)); cursor.setAttribute("x2", x(t)); cursor.setAttribute("visibility", "visible");
     tip.innerHTML = `${when(t)}<br>${rows.join("<br>")}`;

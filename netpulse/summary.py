@@ -61,11 +61,17 @@ def _label(w: dict) -> str:
 def headline(snapshot: dict) -> dict:
     """One line for the top of the dashboard / first line of a status message."""
     wans = snapshot.get("wans") or []
+    if wans and all(w["state"] == "UNKNOWN" for w in wans) and any(w.get("errors") for w in wans):
+        return {"level": "UNKNOWN", "emoji": "⚪", "text": "Monitoring unavailable: check the Pi's probe settings"}
     if not wans or all(w["state"] == "UNKNOWN" for w in wans):
         return {"level": "UNKNOWN", "emoji": "⚪", "text": "Starting up: collecting data"}
 
     worst = max(wans, key=lambda w: SEVERITY[w["state"]])
     if worst["state"] == "HEALTHY":
+        unknown = [w for w in wans if w["state"] == "UNKNOWN"]
+        if unknown:
+            return {"level": "UNKNOWN", "emoji": "⚪", "text": "Measurement unavailable for "
+                    + ", ".join(_label(w) for w in unknown)}
         return {"level": "HEALTHY", "emoji": "🟢", "text": "All good: both connections are healthy"}
 
     problems = [w for w in wans if SEVERITY[w["state"]] >= SEVERITY["DEGRADED"]]
@@ -101,7 +107,10 @@ def status_text(snapshot: dict) -> str:
     h = headline(snapshot)
     lines = [f"{h['emoji']} {h['text']}", ""]
     for w in snapshot.get("wans", []):
-        lines.append(f"{STATE_EMOJI[w['state']]} {_label(w)}: {_fmt(w['rtt_ms'], 0, ' ms')} · {_loss_words(w['loss_pct'])}")
+        if w["state"] == "UNKNOWN":
+            lines.append(f"{STATE_EMOJI[w['state']]} {_label(w)}: measurement unavailable")
+        else:
+            lines.append(f"{STATE_EMOJI[w['state']]} {_label(w)}: {_fmt(w['rtt_ms'], 0, ' ms')} · {_loss_words(w['loss_pct'])}")
         connectivity = w.get("connectivity")
         if (isinstance(connectivity, dict)
                 and result_is_fresh(connectivity.get("checked_at"), time.time())):

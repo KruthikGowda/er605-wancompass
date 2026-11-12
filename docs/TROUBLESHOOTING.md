@@ -23,6 +23,10 @@ The installed package is under `/opt/netpulse`; if the import check cannot find 
 
 WAN-specific health requires all three pieces to match: a probe IP alias on the Linux host, the same `source_ip` under that WAN in `/etc/netpulse/config.toml`, and an ER605 source policy rule that pins that source to the intended WAN.
 
+If the Pi cannot bind a probe source address, the measurement is unavailable; it is not evidence of an ISP outage. Telegram and the dashboard hide loss, latency, and quality numbers while the WAN state is unknown. Check the reported local error before changing the router. A running service alone does not prove that probes are working.
+
+History reports online and healthy percentages only for minutes with a known health state. Measurement coverage shows how many minutes were recorded within the selected period. Missing minutes are not counted as online or offline, and hovering a chart gap shows no measurement. A short run of healthy samples cannot establish a full day's uptime.
+
 Check the alias list and routes:
 
 ```sh
