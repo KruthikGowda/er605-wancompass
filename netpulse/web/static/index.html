@@ -1807,6 +1807,9 @@ async function refreshHistory() {
 
 function drawChart(series, bucket, range) {
   const svg = $("chart"), W = svg.clientWidth || 800, H = 220, L = 38, R = 10, T = 10, B = 24, key = metric;
+  svg.onpointermove = null;
+  svg.onpointerleave = null;
+  $("tip").style.display = "none";
   const all = series.flatMap(s => s.points.filter(p => p[key] != null));
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   if (!all.length) { svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" fill="${css("--soft")}" font-size="14">No history yet: check back in a few minutes</text>`; return; }

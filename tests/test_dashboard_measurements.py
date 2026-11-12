@@ -47,6 +47,8 @@ const speedWord=()=>'', lossWords=v=>`${v}% loss`, jitterWords=()=>'';
   await refreshHistory();
   assert.match($('totals').innerHTML,/Observed online unavailable/);
   assert.match($('totals').innerHTML,/No confirmed health measurements/);
+  assert.equal($('chart').onpointermove,null);
+  assert.equal($('tip').style.display,'none');
   fixture.state_minutes={};
   await refreshHistory();
   assert.match($('totals').innerHTML,/Measurement coverage 0.0%/);
