@@ -211,3 +211,17 @@ python3 tools/adb_acl_probe.py \
 This reporter does not change phone settings. It refuses if mobile data is enabled, the reviewed MAC/IP is not on the active Wi-Fi network, a VPN is active, HTTPS validation fails, or a probe phase changes during a request. It sends only the phase result (IPv4 Internet pass/fail and LAN reachability) to the Pi.
 
 The pilot starts an independent Pi cleanup watchdog before stopping the NetPulse service, writes one temporary rule, and removes that exact unchanged rule. On interruption or reboot, a root recovery unit attempts cleanup before the main service starts. A changed or ambiguous rule is not deleted automatically and keeps controls locked for manual review. The watchdog cannot run if the Pi is powered off, and timed cleanup is not router-native. The bounded pilot is not evidence of permanent pause safety or general dual-WAN behavior.
+
+
+## Native usage counters (read only)
+
+The optional collector reads `ifstat/switch`, `ifstat/list`, `ipstats/setting`,
+`ipstats/list`, `dhcps/client`, and public uptime. `WAN/LAN2` maps to WAN2;
+interface `rx_bytes`/`tx_bytes` are cumulative download/upload observations.
+Native `*_bps` units and refresh timing are not used as verified rates: rates
+come from byte deltas over measured intervals. Device direction stays in router
+RX/TX terminology. Duplicate or changing DHCP identities are excluded.
+
+Known transfers were incompletely reflected on tested firmware. These counters
+must not be described as complete household or ISP accounting. See
+[configuration and coverage semantics](CONFIGURATION.md#router-reported-bandwidth-observations).

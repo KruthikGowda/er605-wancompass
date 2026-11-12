@@ -52,6 +52,7 @@ from netpulse.router.pause import PauseControl
 from netpulse.router.actions import ActionControl
 from netpulse.devices.group_control import GroupControl
 from netpulse.router.traffic import DeviceTraffic
+from netpulse.router.usage import UsageCollector
 from netpulse.router.watch import RouterEvent, RouterWatch
 from netpulse.router.syslog import DhcpAllocation, RouterSyslogProtocol
 from netpulse.speedtest import SpeedResult, SpeedTester
@@ -138,6 +139,9 @@ class Monitor:
         self.action_control = ActionControl(self.router_control, self.pause_control) if self.router_control else None
         self.group_control = GroupControl(cfg.db_path, lambda: self.bot_handlers()["quick_choices"]())
         self.device_traffic = DeviceTraffic(router) if router else None
+        self.usage_collector = (UsageCollector(router,cfg.db_path,[w.name for w in cfg.wans])
+                                if router and cfg.router.traffic_usage_enabled else None)
+        board.set_extra("usage_collector",self.usage_collector)
         self.baselines = Baselines(storage.load_baselines())
         self.trackers = {w.name: WanTracker(w.name, cfg.window_seconds, cfg.thresholds) for w in cfg.wans}
         self.labels = {w.name: w for w in cfg.wans}
@@ -2507,6 +2511,7 @@ async def run_async(cfg: Config) -> None:
     last_prune = time.time()
     evals: dict[str, Evaluation] = {}
     router_task: asyncio.Task | None = None
+    usage_task: asyncio.Task | None = None
     next_router_tick = 0.0
     presence_task: asyncio.Task | None = None
     next_presence_tick = 0.0
@@ -2610,6 +2615,14 @@ async def run_async(cfg: Config) -> None:
                 # Blocking HTTP in a worker thread: probing never waits for the router.
                 router_task = asyncio.create_task(asyncio.to_thread(
                     router.tick, now, advance_during_wait=True))
+            if usage_task and usage_task.done():
+                try:
+                    usage_task.result()
+                except Exception:
+                    log.warning("Router traffic collector is unavailable")
+                usage_task = None
+            if mon.usage_collector and usage_task is None:
+                usage_task = asyncio.create_task(asyncio.to_thread(mon.usage_collector.poll))
 
             if presence_task and presence_task.done():
                 try:
@@ -2733,6 +2746,8 @@ async def run_async(cfg: Config) -> None:
     finally:
         if syslog_transport:
             syslog_transport.close()
+        if usage_task:
+            usage_task.cancel()
         if route_expiry_task:
             route_expiry_task.cancel()
         if pause_expiry_task:

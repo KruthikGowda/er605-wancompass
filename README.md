@@ -54,3 +54,9 @@ sudo systemctl stop netpulse
 The service stores configuration in `/etc/netpulse/config.toml` and history in `/var/lib/netpulse/netpulse.db`. The first install prints a dashboard password once. Keep config, database, Telegram tokens, router credentials, backups, and device inventory private.
 
 For development, use Python 3.11+ and run `python3 -m unittest discover -s tests -t .`. See [CONTRIBUTING.md](CONTRIBUTING.md) and [AI contributor instructions](AGENTS.md).
+
+
+Optional router-reported usage adds live WAN upload/download graphs, observed
+daily totals with collection coverage, and DHCP-identified device rankings.
+Counter completeness was not established on the tested ER605; these are not ISP
+billing totals. See [usage configuration](docs/CONFIGURATION.md#router-reported-bandwidth-observations).

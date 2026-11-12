@@ -170,7 +170,18 @@ def make_handler(board: StatusBoard, db_path: str, auth_file: str | None = None)
                     monitor = board.get_extra("live_monitor")
                     self._json(monitor.live_history() if monitor else {
                         "points": [], "updated": None, "interval_seconds": 10, "max_age_seconds": 30})
-                elif url.path in ("/static/dashboard.css", "/static/live.js"):
+                elif url.path == "/api/usage":
+                    collector = board.get_extra("usage_collector")
+                    if collector is None:
+                        self._json({"enabled": False, "available": False,
+                                    "reason": "Router usage collection is not enabled", "wans": [], "devices": [], "points": []})
+                    else:
+                        try:
+                            self._json({"enabled": True, **collector.snapshot(q.get("day", [None])[0],
+                                float(q.get("hours", ["1"])[0]), q.get("ranking", ["today"])[0])})
+                        except (ValueError, TypeError, OverflowError):
+                            self._json({"error": "Choose a valid date, range, and ranking"}, 400)
+                elif url.path in ("/static/dashboard.css", "/static/live.js", "/static/usage.js"):
                     name = url.path.rsplit("/", 1)[-1]
                     self._send(200, (INDEX.parent / name).read_bytes(),
                                "text/css; charset=utf-8" if name.endswith(".css") else "text/javascript; charset=utf-8")

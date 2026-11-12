@@ -47,3 +47,11 @@ main { max-width:1320px; padding:28px 28px 64px; }
 .telemetry-note { font-size:13px; color:var(--soft); margin:10px 0 0; }
 @media(max-width:700px){main{padding:16px 14px 40px}.section-nav{margin-inline:-14px;padding-inline:14px}.live-grid{grid-template-columns:1fr}.ops-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.monitor{padding:18px}.isp{padding:16px}.live-toolbar{align-items:flex-start}.site-subtitle,.site-summary{margin-left:0}.site-title{font-size:24px}}
 @media(prefers-reduced-motion:reduce){.blip{animation:none}*{scroll-behavior:auto}}
+.usage-section { margin-top:32px; }
+.live-tools input[type="date"] { min-height:44px; max-width:100%; background:var(--card); border:1px solid var(--line); border-radius:7px; padding:8px; color:var(--ink); font:inherit; }
+.usage-caution { padding:12px 16px; background:color-mix(in srgb,var(--warn) 9%,var(--card)); border-left:3px solid var(--warn); border-radius:4px; color:var(--ink); font-size:13px; }
+.usage-metrics { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:16px 0 0; }
+.usage-metrics small { display:block; color:var(--soft); font-size:12px; }.usage-metrics strong{font:600 24px var(--mono)}.usage-metrics span{font:12px var(--body);color:var(--soft)}
+.usage-total { border-top:1px solid var(--line); margin-top:12px; padding-top:12px; }.usage-total strong{font:600 17px var(--mono)}
+.usage-devices { width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;margin-top:12px; }.usage-devices th,.usage-devices td{padding:12px 6px;border-bottom:1px solid var(--line);vertical-align:top;text-align:right;overflow-wrap:anywhere}.usage-devices th:first-child,.usage-devices td:first-child{text-align:left;width:45%}.usage-devices th{font-size:12px;color:var(--soft);font-weight:500}.usage-devices td small{display:block;color:var(--soft);font-size:11px}.usage-bar{height:3px;background:var(--brand);margin-top:8px;max-width:100%}
+@media(max-width:520px){.usage-devices th:first-child,.usage-devices td:first-child{width:40%}.usage-devices{font-size:12px}.usage-metrics strong{font-size:22px}}

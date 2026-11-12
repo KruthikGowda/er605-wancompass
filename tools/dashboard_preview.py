@@ -8,6 +8,7 @@ Every HTTP mutation is rejected.
 
 from __future__ import annotations
 
+import datetime as dt
 import argparse
 import json
 import sqlite3
@@ -125,6 +126,18 @@ def fixture_data(now: float | None = None) -> dict[str, dict]:
         "group_history": [], "devices": devices, "route_history": [],
     }
     return {
+        "/api/usage": {"enabled":True,"available":True,"sampled_at":now-2,"interval_seconds":30,
+            "device_interval_seconds":60,"timezone":time.tzname[0],"day":dt.date.fromtimestamp(now).isoformat(),
+            "today":dt.date.fromtimestamp(now).isoformat(),"ranking":"today","bucket":30,"reason":"",
+            "limitation":"Router-reported observations may omit traffic. Totals are not complete ISP accounting; devices are not split by WAN.",
+            "wans":[{"wan":name,"available":True,"down_mbps":35/(i+1),"up_mbps":4/(i+1),
+                "daily":{"down_bytes":2300000000//(i+1),"up_bytes":340000000//(i+1),"observed_seconds":3600,"coverage_pct":14.5,"first_observed":now-3600}}
+                for i,name in enumerate(("WAN1","WAN2"))],
+            "points":[{"wan":name,"ts":now-30*j,"seconds":30,"down_mbps":max(0,(30+15*math.sin(j/6))/(i+1)),"up_mbps":max(0,(4+2*math.cos(j/9))/(i+1))}
+                for i,name in enumerate(("WAN1","WAN2")) for j in reversed(range(120)) if not 40<j<49],
+            "devices":[{"mac":mac,"label":name,"available":True,"rx_mbps":2/(i+1),"tx_mbps":0.2/(i+1),
+                "daily":{"down_bytes":900000000//(i+1),"up_bytes":100000000//(i+1),"observed_seconds":3600}}
+                for i,(mac,name) in enumerate(zip(macs,names))]},
         "/api/status": status,
         "/api/devices": devices_payload,
         "/api/devices/paused": {"state": {"enabled": True, "configured": True,
@@ -314,7 +327,7 @@ class PreviewServer:
                     html = INDEX.read_text(encoding="utf-8").replace("<body>", "<body>" + DEMO_BANNER, 1)
                     self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
                     return
-                if path in ("/static/dashboard.css", "/static/live.js"):
+                if path in ("/static/dashboard.css", "/static/live.js", "/static/usage.js"):
                     name=path.rsplit("/",1)[-1]
                     self._send(200,(INDEX.parent/name).read_bytes(),"text/css" if name.endswith("css") else "text/javascript")
                     return
@@ -371,14 +384,14 @@ class PreviewServer:
                                "application/json; charset=utf-8")
                     return
                 if path in owner.fixture:
-                    if path in ("/api/status", "/api/live"):
+                    if path in ("/api/status", "/api/live", "/api/usage"):
                         import copy
                         item = copy.deepcopy(owner.fixture[path])
                         delta = time.time() - owner.fixture["/api/status"]["updated"]
                         def advance(value):
                             if isinstance(value,dict):
                                 for key, child in value.items():
-                                    if key in ("updated","checked_at","ts","state_since") and isinstance(child,(int,float)):
+                                    if key in ("updated","checked_at","ts","state_since","sampled_at") and isinstance(child,(int,float)):
                                         value[key] = child + delta
                                     else: advance(child)
                             elif isinstance(value,list):

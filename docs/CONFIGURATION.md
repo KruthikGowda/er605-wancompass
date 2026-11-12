@@ -83,3 +83,36 @@ Read-only router polling, route controls, Internet pause, presence pings, syslog
 - `NETPULSE_ROUTER_PIN=<sha256-fingerprint>` enables the optional certificate-pinning check within the live test suite. Treat the pin as deployment-specific configuration.
 
 The live suite is not a router write authorization and does not test ACL enforcement or client failover. Never run router-writing helpers unless the network owner explicitly authorized the named operation and the exact firmware has been verified.
+
+
+### Router-reported bandwidth observations
+
+`[router].traffic_usage_enabled = true` enables read-only native ER605 interface
+counters every 30 seconds and per-IP counters every 60 seconds. It defaults to
+`false`: frequent standalone API logins can end an open router admin session.
+Calls share the monitor API lock and respect pause, readiness, and authentication
+backoff. No router settings change. Interface and per-IP statistics must already
+be enabled on the router.
+
+WAN RX is download and WAN TX is upload, in decimal Mbps; daily bytes use decimal
+GB. Device rankings use router RX + TX matched to stable, unique DHCP identities.
+They are not per-WAN device accounting and may include routed LAN traffic. The
+date picker selects daily observations; live graphs always end at the present.
+Days follow the Pi local timezone. History lasts two days; daily totals 400 days.
+
+**Completeness is not established.** On an owner-authorized ER605 v2.30 test,
+firmware 2.3.3 Build 20251029 Rel.18054, known source-bound transfers were not
+fully reflected in native interface/per-IP counters. SNMP logical interfaces
+did not establish complete accounting either. These are router observations,
+not verified ISP totals, line capacity, or billing records. The cause is
+unconfirmed; acceleration/policy paths may be omitted. This warning stays visible.
+Do not disable acceleration or enable QoS just to improve counters without
+separate owner approval and throughput tests.
+
+Coverage is time with accepted counter deltas divided by elapsed time in the day;
+it does not measure the fraction of packets counted. First baselines, reboots,
+resets, changed identities, clock corrections, implausible deltas, and gaps over
+three minutes add no usage. Unchanged bytes with a nonzero native reported rate
+wait for refresh, then rebase after three minutes if still stale. Intervals across
+midnight are apportioned by time and marked estimated. Transactional baselines
+preserve totals across restarts without recounting. No earlier usage is reconstructed.
