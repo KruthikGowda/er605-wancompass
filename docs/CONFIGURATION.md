@@ -121,9 +121,11 @@ Daily usage always comes from accepted byte deltas, never integrated rate estima
 Device rankings remain explicitly incomplete, may include routed LAN traffic,
 and are not per-WAN household shares. Hardware flow offload is a likely cause,
 supported by vendor guidance and the larger fraction counted for short TCP flows,
-but was not isolated by changing the router's packet-processing settings. Do not
-disable acceleration or enable DPI/QoS without separate owner approval and a
-bounded throughput/accounting acceptance test.
+and an owner-approved bounded DPI/logging trial substantially improved per-IP
+capture on the existing firmware. Both switches were restored to off afterward.
+That test did not isolate the offload toggle or establish sustained full-speed
+performance. Do not disable acceleration or enable DPI/QoS permanently without
+separate owner approval and throughput/accounting acceptance.
 
 Coverage is time with accepted counter deltas divided by elapsed time in the day;
 it does not measure the fraction of packets counted. First baselines, reboots,

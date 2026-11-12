@@ -236,7 +236,9 @@ single-flow download added about 7 KB RX to the primary-address counter, whereas
 16 shorter downloads totaling 2 MB added about 100 KB. Each address had exactly
 one row. This makes duplicate parsing, aliases alone, and unit conversion
 insufficient explanations; the pattern is consistent with flow-offload bypass.
-No packet-processing configuration was changed to establish causality.
+A subsequent explicitly approved DPI/logging trial changed only those two
+switches and restored both to off after exact read-back. It did not independently
+toggle hardware offload, so the precise bypass mechanism remains an inference.
 
 [TP-Link's older offload explanation](https://community.tp-link.com/en/smart-home/forum/topic/502180)
 confirms a client-statistics limitation on earlier ER605 hardware/firmware. It is
@@ -259,5 +261,33 @@ clients, unknown applications, both directions/WANs, refresh delays, and CPU/spe
 impact. No blocking rules are needed for an analytics-only trial. Exact settings
 must be read back, privately backed up, and restored after a bounded trial unless
 the owner explicitly approves keeping them.
+
+### Bounded DPI/logging acceptance
+
+On the same exact firmware, a separate owner-approved trial compared DPI/logging
+off and on using three Pi-owned source addresses: the ordinary DHCP address and
+one probe alias per WAN. Each source downloaded 4 MB and uploaded 1 MB in each
+phase; all transfers succeeded. After the reporting refresh, combined per-IP
+counter deltas with inspection off were only 132 bytes for the primary address
+and 5,880 bytes for each alias. With inspection on, they were approximately
+5.77 MB, 5.40 MB, and 5.53 MB respectively. Protocol/control traffic means these
+are not exact payload or billing totals, but the order-of-magnitude accounting
+improvement was clear in both counter directions. Application/category logs
+also populated after an additional delay.
+
+The two switches were on for about 132 seconds and restored to their original
+off/off state, with read-back, a separate deadline/reboot recovery mechanism,
+and post-restoration WAN web checks. The monitoring service resumed without
+observed login rejection or traceback. Recovery units were removed after verified
+cleanup; credentials, application logs, addresses, and full measurements remain
+private and are not included here.
+
+Router memory samples rose from 32% to 44%. Short transfer timings and CPU
+snapshots do not establish sustained throughput, multi-WAN capacity, long-term
+stability, or completeness for all applications/clients. DPI is an accounting
+candidate on the existing firmware; permanent enablement requires separate owner
+authorization and an appropriately capable test host for full-speed acceptance.
+This result does not require a firmware update or controller adoption, and does
+not establish that adopting a controller alone corrects accounting.
 
 See [configuration and coverage semantics](CONFIGURATION.md#router-reported-bandwidth-observations).
