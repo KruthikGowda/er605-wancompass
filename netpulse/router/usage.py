@@ -16,7 +16,8 @@ INTERVAL = 30
 DEVICE_INTERVAL = 60
 NATIVE_MAX_AGE = 75
 LIMITATION = ("WAN rates are the router's approximately 30-second averages; daily totals use byte-counter deltas. "
-              "WAN completeness is not certified. Per-device counters missed most controlled test traffic: device rankings are incomplete, not household usage shares or per-WAN attribution.")
+              "Device totals include only intervals with DPI and logging confirmed on. Earlier undercounted observations are excluded. "
+              "Counters include overhead and may include routed LAN traffic; these are not ISP billing records or per-WAN device attribution.")
 
 
 class NativeWanRates:
@@ -82,6 +83,7 @@ class UsageCollector:
         self._counter_rates={}
         self._device_rates={}
         self._device_status='Waiting for a fresh device counter sample'
+        self._dpi={'known':False,'enabled':False,'logging':False,'sampled_at':None}
 
     @staticmethod
     def wan_counters(rows,wans):
@@ -128,10 +130,17 @@ class UsageCollector:
                     wan=self.wan_counters(client.get('ifstat','list'),self.wans)
                     wan_time,wan_mono=self.clock(),self.monotonic()
                     devices_due=mono>=self._next_devices
-                    device_rows=[];device_reason=''
+                    device_rows=[];device_reason='';dpi=None
                     if devices_due:
                         try:
+                            before_dpi=self.dpi_state(client.get('dpi','dpi_setting'))
                             device_rows,device_reason=self._read_devices(client)
+                            dpi=self.dpi_state(client.get('dpi','dpi_setting'))
+                            if before_dpi!=dpi or not dpi['known']:
+                                device_rows=[]
+                                device_reason='DPI state changed or could not be verified during the device sample'
+                            elif dpi['enabled'] and dpi['logging']:
+                                for row in device_rows:row['kind']='device_dpi'
                         except RouterAuthError:
                             raise
                         except Exception:
@@ -152,13 +161,21 @@ class UsageCollector:
                     'reason':'','sampled_at':wan_time}
                 if devices_due:
                     self._next_devices=self.monotonic()+DEVICE_INTERVAL
-                    self._device_rates={mac:{**rates[('device',mac)],'sampled_at':sampled}
-                                        for kind,mac in rates if kind=='device'}
+                    self._device_rates={mac:{**rates[(kind,mac)],'sampled_at':sampled,'dpi_captured':kind=='device_dpi'}
+                                        for kind,mac in rates if kind in ('device','device_dpi')}
                     self._device_status=device_reason
+                    self._dpi={**(dpi or {'known':False,'enabled':False,'logging':False}),'sampled_at':sampled}
         except Exception as exc:
             if isinstance(exc,RouterAuthError):
                 self._retry_after=self.clock()+1800
             self._unavailable('Router counter read failed; waiting for a verified sample')
+
+    @staticmethod
+    def dpi_state(value):
+        if not isinstance(value,dict):return {'known':False,'enabled':False,'logging':False}
+        enabled=DeviceTraffic._status({'status':value.get('switch')})
+        logging=DeviceTraffic._status({'status':value.get('log_switch')})
+        return {'known':enabled is not None and logging is not None,'enabled':enabled is True,'logging':logging is True}
 
     @staticmethod
     def _read_devices(client):
@@ -174,7 +191,7 @@ class UsageCollector:
                 if before.get(mac)!=ip or ip not in counters or ip in invalid:continue
                 rx,tx=counters[ip]
                 device_rows.append({'kind':'device','identity':mac,'binding':ip,
-                    'down':rx,'up':tx,'defer':bool(raw_map[ip].get('rx_bps') or raw_map[ip].get('tx_bps'))})
+                    'down':rx,'up':tx,'defer':bool(NativeWanRates.kbps(raw_map[ip].get('rx_bps')) or NativeWanRates.kbps(raw_map[ip].get('tx_bps')))})
             if not device_rows:device_reason='No counters matched stable, unique DHCP identities'
         else:
             device_reason='ER605 per-IP statistics are disabled or unavailable'
@@ -196,6 +213,7 @@ class UsageCollector:
             status=dict(self._status);rates={k:dict(v) for k,v in self._wan_rates.items()}
             counter_rates={k:dict(v) for k,v in self._counter_rates.items()}
             devices={k:dict(v) for k,v in self._device_rates.items()};device_reason=self._device_status
+            dpi=dict(self._dpi)
         age=None if status['sampled_at'] is None else now-status['sampled_at']
         fresh=bool(age is not None and 0<=age<=INTERVAL*2.5 and status['available'])
         daily={(row['kind'],row['identity']):row for row in result.pop('daily')}
@@ -206,10 +224,15 @@ class UsageCollector:
                     'observed_seconds':row.get('seconds',0),'first_observed':row.get('first_ts'),
                     'last_observed':row.get('last_ts'),'estimated_boundary':bool(row.get('estimated',0)),
                     'coverage_pct':min(100,100*row.get('seconds',0)/expected) if expected else 0}
+        dpi_age=now-dpi['sampled_at'] if dpi['sampled_at'] is not None else None
+        dpi['fresh']=bool(dpi_age is not None and 0<=dpi_age<=DEVICE_INTERVAL*2 and not status['reason'])
+        dpi['capture_active']=bool(dpi['fresh'] and dpi['known'] and dpi['enabled'] and dpi['logging'])
         result.update(status,available=fresh,age_seconds=age,interval_seconds=INTERVAL,device_interval_seconds=DEVICE_INTERVAL,
             today=dt.date.fromtimestamp(now).isoformat(),
             limitation=LIMITATION,accounting_complete=False,device_accounting_complete=False,
-            device_limitation='Incomplete device counters: controlled transfers were mostly missing. Rankings cannot identify the true largest users.',
+            dpi=dpi,device_limitation=('DPI and logging confirmed on. Totals exclude earlier undercounted observations. '
+                'Overhead and routed LAN traffic may be included; devices are not split by WAN.' if dpi['capture_active'] else
+                'DPI capture is off, unverified, or stale. Current device rates are unavailable. Earlier undercounted observations are excluded from these totals.'),
             native_window_seconds=30,native_max_age_seconds=NATIVE_MAX_AGE,native_unit='decimal kB/s',
             timezone=time.tzname[0],expected_seconds=expected,
             wans=[{'wan':name,**rates.get(name,{}),'counter_average':counter_rates.get(name,{}),
@@ -229,16 +252,19 @@ class UsageCollector:
         labels=sqlite.device_labels(self.path)
         with closing(sqlite._ro(self.path)) as db:
             names={mac:name for mac,name in db.execute('SELECT mac,name FROM known_devices')}
-        identities={identity for kind,identity in daily if kind=='device'}|set(devices)
+        identities={identity for kind,identity in daily if kind in ('device','device_dpi')}|set(devices)
         ranked=[]
         for mac in identities:
             current=devices.get(mac,{})
             device_age=now-current.get('sampled_at',0)
-            available=bool(current.get('available') and 0<=device_age<=DEVICE_INTERVAL*2 and not status['reason'])
+            available=bool(current.get('available') and current.get('dpi_captured') and dpi['capture_active'] and 0<=device_age<=DEVICE_INTERVAL*2)
             ranked.append({'mac':mac,'label':labels.get(mac) or names.get(mac) or mac,
                 'available':available,'rx_mbps':current.get('down_mbps') if available else None,
                 'tx_mbps':current.get('up_mbps') if available else None,
-                'reason':current.get('reason','No current counter baseline'),'daily':totals('device',mac)})
+                'down_mbps':current.get('down_mbps') if available else None,
+                'up_mbps':current.get('up_mbps') if available else None,
+                'reason':current.get('reason','No current DPI counter baseline'),'daily':totals('device_dpi',mac),
+                'legacy_daily':totals('device',mac),'dpi_captured':bool(current.get('dpi_captured'))})
         def weight(row):
             return ((row['rx_mbps'] or 0)+(row['tx_mbps'] or 0)) if ranking=='now' else row['daily']['down_bytes']+row['daily']['up_bytes']
         ranked.sort(key=lambda row:(-weight(row),row['label'].casefold()))

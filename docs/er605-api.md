@@ -216,14 +216,15 @@ The pilot starts an independent Pi cleanup watchdog before stopping the NetPulse
 ## Native usage counters (read only)
 
 The optional collector reads `ifstat/switch`, `ifstat/list`, `ipstats/setting`,
-`ipstats/list`, `dhcps/client`, and public uptime. `WAN/LAN2` maps to WAN2;
+`ipstats/list`, `dhcps/client`, `dpi/dpi_setting`, and public uptime. `WAN/LAN2` maps to WAN2;
 interface `rx_bytes`/`tx_bytes` are cumulative download/upload observations.
 Native `rx_bps`/`tx_bps` are integer decimal kB/s on the tested firmware. The
 conversion is `Mbps = kB/s * 0.008`. Changes in cumulative WAN bytes divided by the
 native rate corroborated an approximately 30-second reporting window. Primary
 rates and their history use these fields; byte-delta interval averages remain a
-separate view and determine daily usage. Device direction stays in router RX/TX
-terminology. Duplicate or changing DHCP identities are excluded.
+separate view and determine daily usage. Controlled DPI-qualified transfers corroborated per-IP RX as client download
+and TX as client upload. The API retains RX/TX aliases for compatibility; the
+dashboard labels the qualified rates download/upload. Duplicate or changing DHCP identities are excluded.
 
 ### Counter acceptance and device accounting investigation
 
@@ -291,3 +292,39 @@ This result does not require a firmware update or controller adoption, and does
 not establish that adopting a controller alone corrects accounting.
 
 See [configuration and coverage semantics](CONFIGURATION.md#router-reported-bandwidth-observations).
+
+
+### Device provenance in the dashboard
+
+The usage store retains legacy `device` observations and DPI-qualified
+`device_dpi` observations separately. Device polling verifies DPI and logging
+state on both sides of a counter read; changed/unknown state invalidates that
+sample. Missing identities and transitions invalidate both kinds of baselines
+before new deltas are accepted. Daily DPI totals survive disabling DPI and service
+restarts. Current rates require fresh DPI state and a fresh qualified delta;
+older undercounted observations never become qualified usage through a setting
+change. State reads share the existing router API lock and never perform writes.
+
+
+### Wired throughput acceptance and rollback
+
+An owner-approved gigabit-wired PC test used temporary per-device DHCP/policy
+objects, four parallel TLS connections, and egress checks before and after each
+transfer. Two repetitions per WAN/direction were collected with DPI off, on,
+and off again; completed payload was 7.68 GB. A provider-rejected request size was
+not counted as a speed result. A routing read-back that did not match actual
+forwarding was also rejected; recreating only the trial-owned policy rule allowed
+subsequent tests to verify the intended WAN. In-place route read-back alone is
+not sufficient evidence of forwarding behavior.
+
+The acceptance gate required stable off-state brackets and DPI throughput within
+10% of baseline for both WANs/directions. WAN1 off-state download samples ranged
+from about 408 to 650 Mbps, versus 372 to 467 Mbps with DPI on; the off-state
+baseline drifted by more than 20%. WAN2 download samples stayed near 210 Mbps
+in both modes. These observations do not isolate an exact DPI penalty, but do
+not establish safe full-speed operation on both WANs. The gate failed, and DPI
+and logging were restored to off. All temporary PC router objects and saved
+routing state were restored; the recovery guard verified cleanup before monitoring
+resumed. Permanent DPI enablement was not performed. The dashboard's new
+qualification logic remains useful while capture is off and avoids presenting
+legacy undercounted observations as complete device usage.

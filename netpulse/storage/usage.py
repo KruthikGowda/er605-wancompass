@@ -70,10 +70,10 @@ class UsageStore:
         with connection(self.path) as db:
             db.execute('BEGIN IMMEDIATE')
             if device_poll:
-                present={r['identity'] for r in rows if r['kind']=='device'}
-                for (identity,) in db.execute("SELECT identity FROM usage_baselines WHERE kind='device'").fetchall():
-                    if identity not in present:
-                        db.execute("DELETE FROM usage_baselines WHERE kind='device' AND identity=?",(identity,))
+                present={(r['kind'],r['identity']) for r in rows if r['kind'] in ('device','device_dpi')}
+                for kind,identity in db.execute("SELECT kind,identity FROM usage_baselines WHERE kind IN ('device','device_dpi')").fetchall():
+                    if (kind,identity) not in present:
+                        db.execute('DELETE FROM usage_baselines WHERE kind=? AND identity=?',(kind,identity))
             for row in rows:
                 kind,identity=row['kind'],row['identity']
                 old=db.execute('SELECT ts,mono,instance,uptime,down,up,binding FROM usage_baselines WHERE kind=? AND identity=?',

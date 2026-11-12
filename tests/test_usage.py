@@ -92,7 +92,7 @@ class UsageStorageTests(unittest.TestCase):
         self.assertTrue(all(p['down_mbps']==.8 for p in points))
 
 class Client:
-    def __init__(self,clock):self.clock=clock;self.calls=[];self.value=100;self.fail=None;self.duplicate=False
+    def __init__(self,clock):self.clock=clock;self.calls=[];self.value=100;self.fail=None;self.duplicate=False;self.dpi={'switch':'on','log_switch':'on'}
     @contextmanager
     def session(self):yield self
     def public_info(self):return {'uptime':1000+int(self.clock.mono-100)}
@@ -101,6 +101,7 @@ class Client:
         if self.fail=='auth':raise RouterAuthError('private data')
         if module=='ifstat' and form=='switch':return {'status':'on'}
         if module=='ifstat':return [{'interface':name,'rx_bytes':self.value,'tx_bytes':self.value//2,'rx_bps':125,'tx_bps':50} for name in ('WAN1','WAN/LAN2')]
+        if module=='dpi':return dict(self.dpi)
         if module=='dhcps':return [{'macaddr':MAC,'ipaddr':IP}]*(2 if self.duplicate else 1)
         if module=='ipstats' and self.fail=='device':raise ValueError('private data')
         if form=='setting':return {'status':'on'}
@@ -214,3 +215,42 @@ class NativeWanRateTests(unittest.TestCase):
     def test_native_history_survives_restart_and_does_not_add_daily_bytes(self):
         self.accept();store=UsageStore(self.store.path);report=store.read('2026-11-12',now=self.now)
         self.assertEqual(report['points'][0]['down_mbps'],8);self.assertEqual(report['daily'],[])
+
+class DpiCaptureTests(unittest.TestCase):
+    setUp=UsageCollectorTests.setUp
+    advance=UsageCollectorTests.advance
+    def test_dpi_samples_have_separate_daily_provenance(self):
+        self.c.poll();self.advance(60);r=self.c.snapshot()
+        self.assertTrue(r['dpi']['capture_active']);self.assertTrue(r['devices'][0]['available'])
+        self.assertEqual(r['devices'][0]['daily']['down_bytes'],1000)
+        self.assertGreater(r['devices'][0]['down_mbps'],r['devices'][0]['up_mbps'])
+        self.assertEqual(r['devices'][0]['down_mbps'],r['devices'][0]['rx_mbps'])
+        self.assertEqual(r['devices'][0]['legacy_daily']['down_bytes'],0)
+    def test_legacy_observations_never_become_DPI_totals(self):
+        self.client.dpi={'switch':'off','log_switch':'off'}
+        self.c.poll();self.advance(60);r=self.c.snapshot()
+        self.assertFalse(r['dpi']['capture_active']);self.assertFalse(r['devices'][0]['available'])
+        self.assertEqual(r['devices'][0]['daily']['down_bytes'],0)
+        self.assertEqual(r['devices'][0]['legacy_daily']['down_bytes'],1000)
+    def test_mode_changes_require_new_baselines_and_preserve_qualified_totals(self):
+        self.c.poll();self.advance(60)
+        self.client.dpi={'switch':'off','log_switch':'off'};self.advance(60)
+        self.client.dpi={'switch':'on','log_switch':'on'};self.advance(60)
+        r=self.c.snapshot();self.assertFalse(r['devices'][0]['available'])
+        self.assertEqual(r['devices'][0]['daily']['down_bytes'],1000)
+        self.advance(60);self.assertEqual(self.c.snapshot()['devices'][0]['daily']['down_bytes'],2000)
+    def test_logging_off_does_not_qualify_capture(self):
+        self.client.dpi={'switch':'on','log_switch':'off'};self.c.poll();self.advance(60)
+        r=self.c.snapshot();self.assertFalse(r['dpi']['capture_active']);self.assertEqual(r['devices'][0]['daily']['observed_seconds'],0)
+    def test_stale_DPI_state_hides_current_rates_but_keeps_daily_totals(self):
+        self.c.poll();self.advance(60);self.clock.sleep(121)
+        r=self.c.snapshot();self.assertFalse(r['dpi']['capture_active']);self.assertFalse(r['devices'][0]['available'])
+        self.assertEqual(r['devices'][0]['daily']['down_bytes'],1000)
+    def test_unknown_DPI_state_excludes_device_samples_but_keeps_WAN(self):
+        self.client.dpi={};self.c.poll();self.advance(60);r=self.c.snapshot()
+        self.assertFalse(r['dpi']['known']);self.assertEqual(r['devices'],[]);self.assertTrue(r['available'])
+    def test_DPI_change_inside_poll_discards_that_device_sample(self):
+        original=self.client.get;reads=[{'switch':'off','log_switch':'off'},{'switch':'on','log_switch':'on'}]
+        def get(module,form,*args):return reads.pop(0) if module=='dpi' else original(module,form,*args)
+        self.client.get=get;self.c.poll();r=self.c.snapshot()
+        self.assertEqual(r['devices'],[]);self.assertIn('changed',r['device_reason'])

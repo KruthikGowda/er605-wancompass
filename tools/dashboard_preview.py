@@ -126,7 +126,7 @@ def fixture_data(now: float | None = None) -> dict[str, dict]:
         "group_history": [], "devices": devices, "route_history": [],
     }
     return {
-        "/api/usage": {"enabled":True,"available":True,"sampled_at":now-2,"interval_seconds":30,
+        "/api/usage": {"dpi":{"sampled_at":now-2,"known":True,"fresh":True,"capture_active":True,"enabled":True,"logging":True},"device_limitation":"DPI and logging confirmed on. Earlier undercounted observations are excluded; overhead and routed LAN traffic may be included.","enabled":True,"available":True,"sampled_at":now-2,"interval_seconds":30,
             "device_interval_seconds":60,"timezone":time.tzname[0],"day":dt.date.fromtimestamp(now).isoformat(),
             "today":dt.date.fromtimestamp(now).isoformat(),"ranking":"today","bucket":30,"counter_bucket":30,"native_window_seconds":30,"reason":"",
             "limitation":"Router-reported observations may omit traffic. Totals are not complete ISP accounting; devices are not split by WAN.",
