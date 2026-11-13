@@ -2037,9 +2037,10 @@ async function refreshSpeed() {
     const successes = mine.filter(r => !r.error && r.down_mbps != null);
     const newest = mine[mine.length - 1];
     const last = newest?.error ? successes[successes.length - 1] : newest;
-    const wired = last?.trigger === "wired_pc";
-    const ok = successes.filter(r => (r.trigger === "wired_pc") === wired);
-    const usual = wired ? d.wired_usual?.[wan] : d.usual[wan];
+    const sourceOf = r => ["wired_pc", "wired_pc_ookla"].includes(r?.trigger) ? r.trigger : "pi";
+    const source = sourceOf(last), wired = source !== "pi", ookla = source === "wired_pc_ookla";
+    const ok = successes.filter(r => sourceOf(r) === source);
+    const usual = ookla ? d.ookla_usual?.[wan] : wired ? d.wired_usual?.[wan] : d.usual[wan];
     let body;
     if (!last) body = newest?.error ? `<p class="dip">Last test failed: ${esc(newest.error)}</p><p class="soft">No successful speed measurement is available. Run a new test.</p>` : `<p class="soft">No speed tests yet. Tap “Run speed test”.</p>`;
     else {
@@ -2051,7 +2052,7 @@ async function refreshSpeed() {
         <ul class="facts">
           ${bloat != null ? `<li>${bloat < 20 ? "No extra lag when the line is busy" : `+${fmt(bloat)} ms lag when the line is busy`}</li>` : ""}
           ${usual ? `<li class="${dip ? "dip" : ""}">${dip ? `Much slower than usual (normally about ${fmt(usual)} Mbps)` : `Normally about ${fmt(usual)} Mbps`}</li>` : ""}
-          <li><b>${wired ? "Wired PC" : "Monitoring Pi"}</b> · ${deviceDate(last.ts)}</li>
+          <li><b>${wired ? "Wired PC" : "Monitoring Pi"} · ${ookla ? "Ookla" : "Cloudflare"}</b> · ${deviceDate(last.ts)}</li>
         </ul>`;
     }
     // Sparkline of downloads over 30 days; dips in red.
@@ -2063,7 +2064,7 @@ async function refreshSpeed() {
       const dots = ok.map(r => `<circle cx="${x(r.ts).toFixed(1)}" cy="${y(r.down_mbps).toFixed(1)}" r="2.5" fill="${usual && r.down_mbps < usual * 0.5 ? css("--bad") : colorOf(wan)}"/>`).join("");
       spark = `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Download speed over the last 30 days">
         <path d="${path}" fill="none" stroke="${colorOf(wan)}" stroke-width="1.5" vector-effect="non-scaling-stroke" opacity=".6"/>${dots}</svg>
-        <div class="soft" style="font-size:12px">${ok.length} ${wired ? "wired PC" : "Pi"} tests in 30 days · lowest ${fmt(Math.min(...ok.map(r => r.down_mbps)))} Mbps</div>`;
+        <div class="soft" style="font-size:12px">${ok.length} ${wired ? "wired PC" : "Pi"} ${ookla ? "Ookla" : "Cloudflare"} tests in 30 days · lowest ${fmt(Math.min(...ok.map(r => r.down_mbps)))} Mbps</div>`;
     }
     return `<article class="card isp" style="--c:${colorOf(wan)}">
       <div class="isp-head"><div class="isp-name">${esc(labelOf(wan))}${d.plans[wan] ? `<span>Configured plan: ${fmt(d.plans[wan])} Mbps</span>` : ""}</div></div>

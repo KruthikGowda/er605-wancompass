@@ -594,13 +594,14 @@ def speedtests(path: str, since: int, until: int | None = None) -> list[dict]:
 def usual_download(path: str, wan: str, since: int, min_samples: int = 3,
                    measurement_source: str = "pi") -> float | None:
     """Median download of successful tests: 'what's normal for this ISP' (None until enough tests)."""
-    if measurement_source not in ("pi", "wired_pc"):
+    if measurement_source not in ("pi", "wired_pc", "wired_pc_ookla"):
         raise ValueError("Unknown speed measurement source")
-    source_filter = "trigger = ?" if measurement_source == "wired_pc" else "trigger != ?"
+    source_filter = "trigger NOT IN (?, ?)" if measurement_source == "pi" else "trigger = ?"
+    source_params = ("wired_pc", "wired_pc_ookla") if measurement_source == "pi" else (measurement_source,)
     with closing(_ro(path)) as db:
         vals = [v for (v,) in db.execute(
             "SELECT down_mbps FROM speedtests WHERE wan = ? AND ts >= ? AND error IS NULL AND down_mbps IS NOT NULL AND " + source_filter,
-            (wan, since, "wired_pc"))]
+            (wan, since, *source_params))]
     if len(vals) < min_samples:
         return None
     vals.sort()

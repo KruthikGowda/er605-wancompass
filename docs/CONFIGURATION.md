@@ -183,3 +183,9 @@ routing is restored before results are published. When repeated runs are combine
 the recorded rate is total transferred bytes divided by total transfer time.
 Such tests measure throughput under the test conditions, not guaranteed ISP
 capacity or simultaneous combined-WAN performance.
+
+Ookla observations use the `wired_pc_ookla` source tag. Their baseline and trend
+points are separate from both Pi and wired-PC Cloudflare observations, and the
+API exposes `ookla_usual` independently. The speed cards show the device and
+provider together; a change of provider does not create a false normal-speed
+comparison. Raw third-party test output stays in private operator storage.

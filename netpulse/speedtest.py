@@ -43,7 +43,7 @@ CHUNK = 64 * 1024
 class SpeedResult:
     wan: str
     ts: float
-    trigger: str                  # "scheduled" | "manual" | "wired_pc"
+    trigger: str                  # "scheduled" | "manual" | "wired_pc" | "wired_pc_ookla"
     down_mbps: float | None = None
     up_mbps: float | None = None
     idle_ms: float | None = None

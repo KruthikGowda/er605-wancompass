@@ -230,8 +230,13 @@ class StorageAndReport(unittest.TestCase):
             row = result("WAN1", down=n).to_dict()
             row["trigger"] = "wired_pc"
             sqlite.insert_speedtest(self.path, row)
+        for n in (900, 920, 940):
+            row = result("WAN1", down=n).to_dict()
+            row["trigger"] = "wired_pc_ookla"
+            sqlite.insert_speedtest(self.path, row)
         self.assertEqual(sqlite.usual_download(self.path, "WAN1", 0), 92.5)
         self.assertEqual(sqlite.usual_download(self.path, "WAN1", 0, measurement_source="wired_pc"), 650)
+        self.assertEqual(sqlite.usual_download(self.path, "WAN1", 0, measurement_source="wired_pc_ookla"), 920)
         with self.assertRaises(ValueError):
             sqlite.usual_download(self.path, "WAN1", 0, measurement_source="unverified")
 
