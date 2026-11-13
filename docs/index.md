@@ -16,6 +16,7 @@
 - [ER605 API notes](er605-api.md): API forms, certificate pinning, firmware gates, owned objects, ACL, and write safety.
 - [Internet controls](internet-controls.md): IPv4 device/group pause and resume, commands, and activation checks.
 - [Live validation runbook](LIVE_VALIDATION_RUNBOOK.md): tests requiring an authorized live deployment.
+- [Pause diagnostics](PAUSE_DIAGNOSTICS.md): distinguish fresh traffic from surviving sessions in a guarded single-phone trial.
 - [Home Assistant](home-assistant.md): optional read-only REST sensors.
 - [Current status](CURRENT_STATUS.md): general project capabilities and limitations.
 - [Roadmap](ROADMAP.md): project direction.

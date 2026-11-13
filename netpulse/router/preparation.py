@@ -15,7 +15,9 @@ FORMS = (('dhcps', 'reservation'), ('ipgroup', 'ipscope_reservation'),
          ('ipgroup', 'ipgroup_reservation'), ('policy_route', 'policy_route'))
 
 
-def preparation_plan(before, approval, *, pause_name=None):
+def preparation_plan(before, approval, *, pause_name=None, native_flow=False):
+    if type(native_flow) is not bool or (native_flow and pause_name is None):
+        raise CompatibilityError('Native observation requires an explicitly reviewed pause child.')
     required = {'confirmed','mac','ip','wan','note'}
     if (not isinstance(approval, dict) or set(approval) not in (required, required | {'oneplus_trial_confirmed'})
             or ('oneplus_trial_confirmed' in approval and approval['oneplus_trial_confirmed'] is not True)
@@ -81,14 +83,17 @@ def preparation_plan(before, approval, *, pause_name=None):
                        acl_name=pause_name if pause_name is not None else 'NP_TEST_P_' + '0' * 32)
     plan = {'kind':'preparation', 'before':deepcopy(before), 'approval':deepcopy(approval), 'objects':objects}
     if pause_name is not None: plan['pause'] = child['change']
+    if native_flow:plan['observation']='native_flow'
     return plan
 
 
 def validate_preparation(plan):
     if not isinstance(plan, dict) or set(plan) not in ({'kind','before','approval','objects'},
-                                                    {'kind','before','approval','objects','pause'}) or plan['kind'] != 'preparation':
+                                                    {'kind','before','approval','objects','pause'},
+                                                    {'kind','before','approval','objects','pause','observation'}) or plan['kind'] != 'preparation':
         raise CompatibilityError('Invalid preparation plan.')
-    if plan != preparation_plan(plan['before'], plan['approval'],pause_name=plan.get('pause',{}).get('name')):
+    if plan != preparation_plan(plan['before'], plan['approval'],pause_name=plan.get('pause',{}).get('name'),
+                                native_flow=plan.get('observation')=='native_flow'):
         raise CompatibilityError('Preparation objects differ from the exact reviewed plan.')
     return plan
 
@@ -315,6 +320,9 @@ def run_preparation(plan, journal, adapter, watchdog, *, seconds=180, probe=None
                     journal.replace(updated,record); record = updated
         if 'pause' in plan:
             baseline = probe.prepared()
+            if plan.get('observation')=='native_flow':
+                from netpulse.router.flow_evidence import validate_flow_evidence
+                validate_flow_evidence({**baseline,'phase':'prepared'})
             if baseline.get('internet_ipv4_ok') is not True or baseline.get('lan_ok') is not True or baseline.get('wan1_verified') is not True:
                 raise CompatibilityError('Endpoint WAN1 baseline failed; no pause rule was added.')
             with journal.locked():
@@ -332,6 +340,7 @@ def run_preparation(plan, journal, adapter, watchdog, *, seconds=180, probe=None
                     updated=deepcopy(record);updated['pause_receipt']=deepcopy(row)
                     journal.replace(updated,record);record=updated
             blocked=probe.blocked()
+            if plan.get('observation')=='native_flow':validate_flow_evidence({**blocked,'phase':'blocked'})
             if blocked.get('internet_ipv4_ok') is not False or blocked.get('lan_ok') is not True:
                 raise CompatibilityError('Endpoint IPv4 block/LAN heartbeat observation failed.')
             with journal.locked():
@@ -344,6 +353,7 @@ def run_preparation(plan, journal, adapter, watchdog, *, seconds=180, probe=None
                     current=adapter.snapshot();assert_identity(current,plan);inspect_progress(record,current)
                     if pause_row(record,current) is not None: raise CompatibilityError('Resume was not read back.')
             recovered=probe.resumed()
+            if plan.get('observation')=='native_flow':validate_flow_evidence({**recovered,'phase':'recovery'})
             if recovered.get('internet_ipv4_ok') is not True or recovered.get('lan_ok') is not True:
                 raise CompatibilityError('Endpoint resume did not recover IPv4/LAN.')
     finally:

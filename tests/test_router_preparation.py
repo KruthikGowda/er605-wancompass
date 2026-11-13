@@ -326,6 +326,48 @@ class PreparationTests(unittest.TestCase):
                                blocked=lambda:{'internet_ipv4_ok':False,'lan_ok':True},
                                resumed=lambda:{'internet_ipv4_ok':True,'lan_ok':True})
 
+    def native_bundle(self):
+        probe=self.pause_bundle()
+        self.plan=preparation_plan(self.before,review(),pause_name=self.plan['pause']['name'],native_flow=True)
+        def native(phase, reachable):
+            return {'transport':'native_curl','internet_ipv4_ok':reachable,'lan_ok':True,'wan1_verified':True,
+                    'checks':{'ipify':reachable,'cloudflare':reachable},
+                    'flow':{'prepared_new_connection':phase=='prepared' or phase=='blocked',
+                            'reuse_confirmed':False,'existing_request_ok':False,
+                            'fresh_processes_verified':True,'existing_result_conclusive':phase=='blocked'}}
+        probe.prepared=lambda:native('prepared',True)
+        probe.blocked=lambda:native('blocked',False)
+        probe.resumed=lambda:native('recovery',True)
+        return probe
+
+    def test_native_plan_rejects_browser_baseline_before_pause_and_restores_setup(self):
+        probe=self.native_bundle()
+        probe.prepared=lambda:{'internet_ipv4_ok':True,'lan_ok':True,'wan1_verified':True}
+        with self.assertRaises(CompatibilityError):
+            run_preparation(self.plan,self.journal,self.adapter,self.watchdog,probe=probe)
+        self.assertEqual(self.adapter.deleted,[3,2,1,0])
+        self.assertEqual(self.adapter.current,self.before)
+        self.assertFalse(self.journal.path.exists())
+
+    def test_native_surviving_existing_flow_fails_and_removes_acl_first(self):
+        probe=self.native_bundle();blocked=probe.blocked()
+        blocked['internet_ipv4_ok']=True
+        blocked['flow'].update(reuse_confirmed=True,existing_request_ok=True)
+        probe.blocked=lambda:blocked
+        with self.assertRaisesRegex(CompatibilityError,'block/LAN'):
+            run_preparation(self.plan,self.journal,self.adapter,self.watchdog,probe=probe)
+        self.assertEqual(self.adapter.deleted,['pause',3,2,1,0])
+        self.assertEqual(self.adapter.current,self.before)
+
+    def test_native_success_preserves_observation_requirement_and_full_teardown(self):
+        probe=self.native_bundle()
+        changed=deepcopy(self.plan);changed['observation']='browser'
+        with self.assertRaises(CompatibilityError):validate_preparation(changed)
+        run_preparation(self.plan,self.journal,self.adapter,self.watchdog,probe=probe)
+        self.assertEqual(self.adapter.deleted,['pause',3,2,1,0])
+        self.assertFalse(self.journal.path.exists())
+        self.assertEqual(self.adapter.current,self.before)
+
     def test_combined_pause_uses_one_journal_and_removes_acl_before_setup(self):
         probe=self.pause_bundle()
         run_preparation(self.plan,self.journal,self.adapter,self.watchdog,probe=probe)

@@ -248,7 +248,10 @@ def build_acl_row(mac: str, name: str, states: tuple[str, ...] | None = None) ->
 class EndpointProbe:
     """Short-lived Pi LAN page that proves phone-originated IPv4 and LAN heartbeat."""
 
-    def __init__(self, bind_host: str, candidate_ip: str, ttl_seconds: int = 480, *, include_egress=False):
+    def __init__(self, bind_host: str, candidate_ip: str, ttl_seconds: int = 480, *, include_egress=False,
+                 native_flow=False):
+        if type(native_flow) is not bool or (native_flow and not include_egress):
+            raise ValueError('Native flow evidence requires explicit egress mode.')
         if not ipaddress.IPv4Address(bind_host).is_private:
             raise PilotError("The probe server must bind to the Pi's private IPv4 LAN address.")
         self.candidate_ip = str(ipaddress.IPv4Address(candidate_ip))
@@ -256,6 +259,9 @@ class EndpointProbe:
         self.expires_at = time.time() + min(max(int(ttl_seconds), 60), 600)
         self.phase = "baseline"
         self.include_egress = include_egress
+        self.native_flow = native_flow
+        self.barrier_started = False
+        self.closed = False
         self.reports: dict[str, dict] = {}
         self._condition = threading.Condition()
         owner = self
@@ -290,13 +296,26 @@ class EndpointProbe:
                     self._send(404, b"not found", "text/plain; charset=utf-8")
                     return
                 if parsed.path == PROBE_PATH:
-                    body = _probe_html(owner.token,include_egress=owner.include_egress).encode("utf-8")
+                    body = (b'Native phone diagnostic endpoint. The reviewed USB reporter supplies connection evidence; this page does not run browser probes.'
+                            if owner.native_flow else _probe_html(owner.token,include_egress=owner.include_egress).encode("utf-8"))
                     self._send(200, body, "text/html; charset=utf-8")
                 elif parsed.path == "/state":
                     with owner._condition:
                         payload = json.dumps({"phase": owner.phase,
-                                              "expires_in": max(0, int(owner.expires_at - time.time()))})
+                                              "expires_in": max(0, int(owner.expires_at - time.time())),
+                                              **({'native_flow':True,'barrier_waiting':owner.barrier_started}
+                                                 if owner.native_flow else {})})
                     self._send(200, payload.encode(), "application/json")
+                elif parsed.path == '/barrier' and owner.native_flow:
+                    with owner._condition:
+                        if owner.phase != 'prepared' or owner.barrier_started or owner.closed:
+                            self._send(409,b'barrier unavailable','text/plain');return
+                        owner.barrier_started = True
+                        deadline = min(time.monotonic()+40,time.monotonic()+max(0,owner.expires_at-time.time()))
+                        while owner.phase == 'prepared' and not owner.closed and time.monotonic()<deadline:
+                            owner._condition.wait(min(1,deadline-time.monotonic()))
+                        released = owner.phase == 'blocked' and not owner.closed
+                    self._send(200 if released else 409,b'released' if released else b'cancelled','text/plain')
                 else:
                     self._send(404, b"not found", "text/plain; charset=utf-8")
 
@@ -335,7 +354,15 @@ class EndpointProbe:
                             owner.reports.pop(owner.phase,None)
                             self._send(400,b'bad egress report','text/plain');return
                         owner.reports[owner.phase]['public_ip']=public_ip
-                        if owner.phase=='blocked':
+                        if owner.native_flow:
+                            from netpulse.router.flow_evidence import validate_flow_evidence
+                            from netpulse.router.compatibility import CompatibilityError
+                            try: evidence=validate_flow_evidence(data)
+                            except (CompatibilityError,KeyError,TypeError):
+                                owner.reports.pop(owner.phase,None)
+                                self._send(400,b'bad native evidence','text/plain');return
+                            owner.reports[owner.phase].update(evidence)
+                        elif owner.phase=='blocked':
                             checks=data.get('checks')
                             if (not isinstance(checks,dict) or set(checks)!={'ipify','cloudflare'}
                                     or any(type(v) is not bool for v in checks.values())
@@ -375,6 +402,9 @@ class EndpointProbe:
             return dict(self.reports[phase])
 
     def close(self) -> None:
+        with self._condition:
+            self.closed = True
+            self._condition.notify_all()
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
