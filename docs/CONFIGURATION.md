@@ -161,3 +161,25 @@ rather than assuming the Pi and viewing computer have identical wall clocks.
 The one-second HTTP Date precision is rounded conservatively forward. Without a
 valid Date header, browser time remains the fallback. Real missing/stale samples
 remain unavailable; missing evidence is never displayed as confirmed WAN failure.
+### Speed-test measurement sources
+
+The Overview speed cards identify the test device and exact test date/time.
+`wired_pc` observations use the existing speed-test trigger field; the dashboard
+keeps their graph points and normal-speed baseline separate from Pi measurements.
+The API exposes `wired_usual` alongside the Pi `usual` map. The manual button is
+explicitly labeled **Run Pi speed test**; it does not start a test on a wired PC.
+A failed latest attempt retains the earlier successful result with a warning.
+
+Source-bound speed connections resolve only addresses matching the configured
+source IP family. The HTTPS hostname, SNI and certificate verification remain
+unchanged; failures never fall back to an unbound connection. HTTP errors,
+truncated downloads and failed parallel streams cannot produce successful speed
+results. These checks prevent address-family mismatches and rejected responses
+from being confused with a slow WAN.
+
+An operator-run wired comparison uses bounded transfers and checks actual public
+egress before and after each persistent test flow. Temporary owner-approved PC
+routing is restored before results are published. When repeated runs are combined,
+the recorded rate is total transferred bytes divided by total transfer time.
+Such tests measure throughput under the test conditions, not guaranteed ISP
+capacity or simultaneous combined-WAN performance.

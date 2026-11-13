@@ -235,6 +235,8 @@ def make_handler(board: StatusBoard, db_path: str, auth_file: str | None = None)
                         "running": bool(mon and mon.tester.running),
                         "results": sqlite.speedtests(db_path, since),
                         "usual": mon.usual_speeds() if mon else {},
+                        "wired_usual": {n: sqlite.usual_download(db_path, n, since, measurement_source="wired_pc")
+                                        for n in mon.labels} if mon else {},
                         "plans": {n: w.plan_mbps for n, w in mon.labels.items()} if mon else {},
                         "data_usage": (
                             mon.speedtest_data_usage()

@@ -311,10 +311,10 @@
   </section>
 
 <section class="speed-overview" aria-label="Internet speed test results">
-  <h2>Internet speed · last test <button class="run" id="run-speed">Run speed test</button></h2>
+  <h2>Internet speed · last test <button class="run" id="run-speed">Run Pi speed test</button></h2>
   <div class="isps" id="speeds"></div>
   <p class="soft" style="font-size:13px;margin:8px 2px 0" id="speed-note">Results can be limited by the monitoring device’s capacity; trends and dips are most useful.</p>
-<p class="telemetry-note">Speed tests estimate connection capacity. Live traffic below shows current usage. Tests run from the monitoring Pi and can be limited by its Ethernet port and power.</p>
+<p class="telemetry-note">Each result names its test device. Wired PC tests avoid the Pi's Ethernet limit. The manual button runs from the Pi and can be limited by its Ethernet port and power. Live traffic below shows usage, not speed-test capacity.</p>
 </section>
   <div class="traffic-summary" aria-label="Combined WAN traffic">
     <article class="summary-tile"><span class="tile-label">Live download usage</span><strong id="total-download" class="num">—</strong><span class="tile-foot" id="total-download-note">Waiting for both WAN counters</span></article>
@@ -2022,7 +2022,7 @@ async function refreshSpeed() {
   const u = d.data_usage;
   const budgetReached = u && u.budget_enabled && u.used_mb + u.next_run_mb > u.budget_mb;
   btn.disabled = d.running || budgetReached;
-  btn.textContent = d.running ? "Testing… (about a minute)" : budgetReached ? "Monthly budget reached" : "Run speed test";
+  btn.textContent = d.running ? "Testing… (about a minute)" : budgetReached ? "Monthly budget reached" : "Run Pi speed test";
   if (d.data_usage) {
     const used = fmt(u.used_mb, 0), next = fmt(u.next_run_mb, 0);
     $("speed-note").textContent = u.budget_enabled
@@ -2034,10 +2034,12 @@ async function refreshSpeed() {
   const names = order.length ? order : [...new Set(d.results.map(r => r.wan))];
   $("speeds").innerHTML = names.map(wan => {
     const mine = d.results.filter(r => r.wan === wan);
-    const ok = mine.filter(r => !r.error && r.down_mbps != null);
+    const successes = mine.filter(r => !r.error && r.down_mbps != null);
     const newest = mine[mine.length - 1];
-    const last = newest?.error ? ok[ok.length - 1] : newest;
-    const usual = d.usual[wan];
+    const last = newest?.error ? successes[successes.length - 1] : newest;
+    const wired = last?.trigger === "wired_pc";
+    const ok = successes.filter(r => (r.trigger === "wired_pc") === wired);
+    const usual = wired ? d.wired_usual?.[wan] : d.usual[wan];
     let body;
     if (!last) body = newest?.error ? `<p class="dip">Last test failed: ${esc(newest.error)}</p><p class="soft">No successful speed measurement is available. Run a new test.</p>` : `<p class="soft">No speed tests yet. Tap “Run speed test”.</p>`;
     else {
@@ -2049,7 +2051,7 @@ async function refreshSpeed() {
         <ul class="facts">
           ${bloat != null ? `<li>${bloat < 20 ? "No extra lag when the line is busy" : `+${fmt(bloat)} ms lag when the line is busy`}</li>` : ""}
           ${usual ? `<li class="${dip ? "dip" : ""}">${dip ? `Much slower than usual (normally about ${fmt(usual)} Mbps)` : `Normally about ${fmt(usual)} Mbps`}</li>` : ""}
-          <li class="soft">Last successful test · ${deviceDate(last.ts)}</li>
+          <li><b>${wired ? "Wired PC" : "Monitoring Pi"}</b> · ${deviceDate(last.ts)}</li>
         </ul>`;
     }
     // Sparkline of downloads over 30 days; dips in red.
@@ -2061,7 +2063,7 @@ async function refreshSpeed() {
       const dots = ok.map(r => `<circle cx="${x(r.ts).toFixed(1)}" cy="${y(r.down_mbps).toFixed(1)}" r="2.5" fill="${usual && r.down_mbps < usual * 0.5 ? css("--bad") : colorOf(wan)}"/>`).join("");
       spark = `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Download speed over the last 30 days">
         <path d="${path}" fill="none" stroke="${colorOf(wan)}" stroke-width="1.5" vector-effect="non-scaling-stroke" opacity=".6"/>${dots}</svg>
-        <div class="soft" style="font-size:12px">${ok.length} tests in 30 days · lowest ${fmt(Math.min(...ok.map(r => r.down_mbps)))} Mbps</div>`;
+        <div class="soft" style="font-size:12px">${ok.length} ${wired ? "wired PC" : "Pi"} tests in 30 days · lowest ${fmt(Math.min(...ok.map(r => r.down_mbps)))} Mbps</div>`;
     }
     return `<article class="card isp" style="--c:${colorOf(wan)}">
       <div class="isp-head"><div class="isp-name">${esc(labelOf(wan))}${d.plans[wan] ? `<span>Configured plan: ${fmt(d.plans[wan])} Mbps</span>` : ""}</div></div>
