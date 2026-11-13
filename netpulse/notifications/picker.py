@@ -92,6 +92,8 @@ class _Session:
     review_kind: str = "router"
     review_payload: dict | None = None
     duration_seconds: int | None = None
+    action_ids: tuple[str, ...] = ()
+    name_choices: tuple[str, ...] = ()
 
 
 class QuickPicker:
@@ -161,19 +163,8 @@ class QuickPicker:
         if session.phase == "await_name":
             if (not text or text.startswith("/") or len(text) > 40 or
                     any(ord(char) < 32 for char in text)):
-                return "Send one plain name for the group, 1 to 40 characters, or tap Cancel.", self._cancel_markup(session)
-            session.group_name = text
-            if session.group_operation == "rename":
-                return self._group_review(session, {
-                    "action": "rename", "group_id": session.group_target.get("id"), "name": text})
-            session.purpose = "create_group"
-            session.kind = "devices"
-            session.choices = self._read_choices("devices")
-            session.selected = []
-            session.page = 0
-            session.phase = "list"
-            session.revision += 1
-            return self._list_view(session)
+                return "Send one plain name for the group, 1 to 40 characters, or choose a button below.", self._name_markup(session)
+            return self._accept_name(session, text)
         if session.phase != "list" or not self.is_selection(text):
             return None
         try:
@@ -220,9 +211,11 @@ class QuickPicker:
             if not self._group_preview or not self._group_apply:
                 return "Group editing is not available.", self._list_markup(session)
             session.group_operation = "create"
-            session.phase = "await_name"
-            session.revision += 1
-            return "What should the new group be called? Send one plain name (up to 40 characters).", self._cancel_markup(session)
+            return self._name_view(session)
+        if session.phase == "await_name":
+            if verb == "name" and 0 <= index < len(session.name_choices):
+                return self._accept_name(session, session.name_choices[index])
+            return "Choose one of the displayed group names, or tap Cancel.", self._name_markup(session)
         if session.phase == "list":
             start = session.page * PAGE_SIZE
             end = min(start + PAGE_SIZE, len(session.choices))
@@ -281,7 +274,7 @@ class QuickPicker:
 
     @staticmethod
     def _parse_data(data: str) -> tuple[str, int, str, int] | None:
-        match = re.fullmatch(r"qp:([A-Za-z0-9_-]{6,16}):(\d+):(item|page|next|action|duration|back|confirm|cancel|create):(\d+|m)", data)
+        match = re.fullmatch(r"qp:([A-Za-z0-9_-]{6,16}):(\d+):(item|page|next|action|duration|back|confirm|cancel|create|name):(\d+|m)", data)
         if not match:
             return None
         nonce, revision, verb, raw_index = match.groups()
@@ -320,7 +313,7 @@ class QuickPicker:
         if not session.choices:
             lines.append("No matching choices are available.")
         else:
-            lines.append("Tap to select, or reply with numbers such as 1 or 1,2.")
+            lines.append("Tap to select, then tap Choose action (or Review changes). Tap again to unselect.")
         if session.selected:
             lines.append("Selected: " + ", ".join(str(i + 1) for i in session.selected))
         for local, choice in enumerate(session.choices[session.page * PAGE_SIZE:(session.page + 1) * PAGE_SIZE], 1):
@@ -335,7 +328,7 @@ class QuickPicker:
                 count = choice.get("count")
                 label = f"{marker}{local}. {name}" + (f" · {count} devices" if isinstance(count, int) else "")
             lines.append(label)
-        lines.append("Send /cancel to stop.")
+        lines.append("Tap Cancel to stop without making changes.")
         if len(session.choices) == MAX_CHOICES:
             lines.append("Showing up to 512 entries.")
         return _bounded_text("\n".join(lines)), self._list_markup(session)
@@ -427,13 +420,13 @@ class QuickPicker:
             return []
 
     def _action_id(self, session: _Session, index: int) -> str | None:
-        actions = [a for a in self._read_actions(session) if a.get("enabled", True)]
-        return actions[index].get("id") if 0 <= index < len(actions) else None
+        return session.action_ids[index] if 0 <= index < len(session.action_ids) else None
 
     def _actions_markup(self, session: _Session, actions: list[dict] | None = None) -> dict:
         actions = actions if actions is not None else self._read_actions(session)
         rows = []
         enabled = [action for action in actions if action.get("enabled", True)]
+        session.action_ids = tuple(action.get("id") for action in enabled)
         callback_indexes = {action.get("id"): index for index, action in enumerate(enabled)}
         pair_ids = {
             "prefer_wan1": "prefer_wan2", "prefer_wan2": "prefer_wan1",
@@ -533,10 +526,7 @@ class QuickPicker:
             session.group_target = group
             if action == "group_rename":
                 session.group_operation = "rename"
-                session.phase = "await_name"
-                session.revision += 1
-                return ("What should this group be called? Send one plain name (up to 40 characters).",
-                        self._cancel_markup(session))
+                return self._name_view(session)
             if action == "group_delete":
                 return self._group_review(session, {"action": "delete", "group_id": group.get("id")})
         return self._review_view(session, action)
@@ -687,6 +677,35 @@ class QuickPicker:
 
     def _cancel_markup(self, session: _Session) -> dict:
         return {"inline_keyboard": [[{"text": "Cancel", "callback_data": self._data(session, "cancel", 0)}]]}
+
+    def _name_view(self, session: _Session) -> tuple[str, dict]:
+        used = {str(group.get("name", "")).casefold() for group in self._read_choices("groups")}
+        candidates = ["Work", "Family", "Guests", "Smart home", "Entertainment", "Home"]
+        candidates.extend(f"Group {i}" for i in range(1, MAX_CHOICES + 7))
+        session.name_choices = tuple(name for name in candidates if name.casefold() not in used)[:6]
+        session.phase = "await_name"
+        session.revision += 1
+        return "Choose a group name below. You can also send a custom name (up to 40 characters).", self._name_markup(session)
+
+    def _name_markup(self, session: _Session) -> dict:
+        buttons = [{"text": name, "callback_data": self._data(session, "name", index)}
+                   for index, name in enumerate(session.name_choices)]
+        return {"inline_keyboard": [buttons[i:i + 2] for i in range(0, len(buttons), 2)] +
+                [[{"text": "Cancel", "callback_data": self._data(session, "cancel", 0)}]]}
+
+    def _accept_name(self, session: _Session, name: str) -> tuple[str, dict]:
+        session.group_name = name
+        if session.group_operation == "rename":
+            return self._group_review(session, {
+                "action": "rename", "group_id": session.group_target.get("id"), "name": name})
+        session.purpose = "create_group"
+        session.kind = "devices"
+        session.choices = self._read_choices("devices")
+        session.selected = []
+        session.page = 0
+        session.phase = "list"
+        session.revision += 1
+        return self._list_view(session)
 
     def _confirm_markup(self, session: _Session) -> dict:
         return {"inline_keyboard": [[

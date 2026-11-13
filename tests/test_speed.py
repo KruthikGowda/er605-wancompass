@@ -2,6 +2,8 @@ import csv
 import http.client
 import io
 import json
+import socket
+import ssl
 import tempfile
 import threading
 import time
@@ -29,6 +31,76 @@ class Maths(unittest.TestCase):
     def test_bufferbloat(self):
         self.assertEqual(result("WAN1", idle=20, loaded=65).bufferbloat_ms, 45)
         self.assertIsNone(result("WAN1", loaded=None).bufferbloat_ms)
+
+
+class SourceBoundTransfers(unittest.TestCase):
+    def test_ipv4_source_resolves_only_ipv4_and_preserves_binding(self):
+        answer = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.5", 443))]
+        with mock.patch.object(speedtest.socket, "getaddrinfo", return_value=answer) as resolve, \
+             mock.patch.object(speedtest.socket, "create_connection") as connect:
+            speedtest._source_bound_connection((speedtest.HOST, 443), 9, ("192.0.2.10", 0))
+        resolve.assert_called_once_with(speedtest.HOST, 443, socket.AF_INET, socket.SOCK_STREAM)
+        connect.assert_called_once_with(("203.0.113.5", 443), 9, ("192.0.2.10", 0))
+
+    def test_all_matching_addresses_can_be_tried_without_unbinding(self):
+        answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 443))
+                   for ip in ("203.0.113.5", "203.0.113.6")]
+        expected = object()
+        with mock.patch.object(speedtest.socket, "getaddrinfo", return_value=answers), \
+             mock.patch.object(speedtest.socket, "create_connection", side_effect=[OSError("unreachable"), expected]) as connect:
+            self.assertIs(speedtest._source_bound_connection((speedtest.HOST, 443), 9, ("192.0.2.10", 0)), expected)
+        self.assertEqual(connect.call_count, 2)
+        self.assertTrue(all(call.args[2] == ("192.0.2.10", 0) for call in connect.call_args_list))
+
+    def test_missing_matching_family_fails_without_unbound_fallback(self):
+        with mock.patch.object(speedtest.socket, "getaddrinfo", return_value=[]), \
+             mock.patch.object(speedtest.socket, "create_connection") as connect:
+            with self.assertRaisesRegex(OSError, "matches.*source IP family"):
+                speedtest._source_bound_connection((speedtest.HOST, 443), 9, ("192.0.2.10", 0))
+        connect.assert_not_called()
+
+    def test_ipv6_source_selects_ipv6(self):
+        with mock.patch.object(speedtest.socket, "getaddrinfo", return_value=[]) as resolve:
+            with self.assertRaises(OSError):
+                speedtest._source_bound_connection((speedtest.HOST, 443), 9, ("2001:db8::10", 0))
+        self.assertEqual(resolve.call_args.args[2], socket.AF_INET6)
+
+    def test_connection_keeps_tls_hostname_and_verification(self):
+        c = speedtest._conn("192.0.2.10", 9)
+        self.assertEqual(c.host, speedtest.HOST)
+        self.assertEqual(c.source_address, ("192.0.2.10", 0))
+        self.assertTrue(c._context.check_hostname)
+        self.assertEqual(c._context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertIs(c._create_connection, speedtest._source_bound_connection)
+        c.close()
+
+    def test_rejected_http_responses_are_not_measured_as_speed(self):
+        for upload in (False, True):
+            with self.subTest(upload=upload):
+                c = mock.Mock()
+                c.getresponse.return_value = mock.Mock(status=403)
+                with mock.patch.object(speedtest, "_conn", return_value=c):
+                    with self.assertRaisesRegex(OSError, "HTTP 403"):
+                        speedtest._transfer("192.0.2.10", speedtest.CHUNK, 1, 5, upload)
+                c.close.assert_called_once()
+
+    def test_truncated_download_is_not_published(self):
+        r = mock.Mock(status=200)
+        r.read.side_effect = [b"small body", b""]
+        c = mock.Mock()
+        c.getresponse.return_value = r
+        with mock.patch.object(speedtest, "_conn", return_value=c):
+            with self.assertRaisesRegex(OSError, "incomplete download"):
+                speedtest._transfer("192.0.2.10", speedtest.CHUNK, 1, 5, False)
+
+    def test_a_failed_stream_invalidates_the_parallel_measurement(self):
+        good, bad = mock.Mock(), mock.Mock()
+        good.getresponse.return_value = mock.Mock(status=200)
+        good.getresponse.return_value.read.return_value = b"x" * speedtest.CHUNK
+        bad.getresponse.return_value = mock.Mock(status=503)
+        with mock.patch.object(speedtest, "_conn", side_effect=[good, bad]):
+            with self.assertRaisesRegex(OSError, "HTTP 503"):
+                speedtest._transfer("192.0.2.10", speedtest.CHUNK * 2, 2, 5, False)
 
 
 class Tester(unittest.TestCase):
@@ -152,6 +224,21 @@ class StorageAndReport(unittest.TestCase):
     def test_usual_download_is_median(self):
         self.assertEqual(sqlite.usual_download(self.path, "WAN1", 0), 92.5)
         self.assertIsNone(sqlite.usual_download(self.path, "WAN2", 0))
+
+    def test_wired_pc_baselines_do_not_change_pi_baselines(self):
+        for n in (600, 650, 700):
+            row = result("WAN1", down=n).to_dict()
+            row["trigger"] = "wired_pc"
+            sqlite.insert_speedtest(self.path, row)
+        for n in (900, 920, 940):
+            row = result("WAN1", down=n).to_dict()
+            row["trigger"] = "wired_pc_ookla"
+            sqlite.insert_speedtest(self.path, row)
+        self.assertEqual(sqlite.usual_download(self.path, "WAN1", 0), 92.5)
+        self.assertEqual(sqlite.usual_download(self.path, "WAN1", 0, measurement_source="wired_pc"), 650)
+        self.assertEqual(sqlite.usual_download(self.path, "WAN1", 0, measurement_source="wired_pc_ookla"), 920)
+        with self.assertRaises(ValueError):
+            sqlite.usual_download(self.path, "WAN1", 0, measurement_source="unverified")
 
     def test_report_outages_and_html(self):
         rep = report.build(self.path, {"WAN1": "Example ISP A"}, {"WAN1": 200}, 1)

@@ -166,6 +166,25 @@ def make_handler(board: StatusBoard, db_path: str, auth_file: str | None = None)
                     self._send(200, INDEX.read_bytes(), "text/html; charset=utf-8")
                 elif url.path == "/api/status":
                     self._json(board.get())
+                elif url.path == "/api/live":
+                    monitor = board.get_extra("live_monitor")
+                    self._json(monitor.live_history() if monitor else {
+                        "points": [], "updated": None, "interval_seconds": 10, "max_age_seconds": 30})
+                elif url.path == "/api/usage":
+                    collector = board.get_extra("usage_collector")
+                    if collector is None:
+                        self._json({"enabled": False, "available": False,
+                                    "reason": "Router usage collection is not enabled", "wans": [], "devices": [], "points": []})
+                    else:
+                        try:
+                            self._json({"enabled": True, **collector.snapshot(q.get("day", [None])[0],
+                                float(q.get("hours", ["1"])[0]), q.get("ranking", ["today"])[0])})
+                        except (ValueError, TypeError, OverflowError):
+                            self._json({"error": "Choose a valid date, range, and ranking"}, 400)
+                elif url.path in ("/static/dashboard.css", "/static/live.js", "/static/usage.js"):
+                    name = url.path.rsplit("/", 1)[-1]
+                    self._send(200, (INDEX.parent / name).read_bytes(),
+                               "text/css; charset=utf-8" if name.endswith(".css") else "text/javascript; charset=utf-8")
                 elif url.path == "/api/actions":
                     actions = board.get_extra("action_control")
                     state = actions.state() if actions else {
@@ -216,6 +235,10 @@ def make_handler(board: StatusBoard, db_path: str, auth_file: str | None = None)
                         "running": bool(mon and mon.tester.running),
                         "results": sqlite.speedtests(db_path, since),
                         "usual": mon.usual_speeds() if mon else {},
+                        "wired_usual": {n: sqlite.usual_download(db_path, n, since, measurement_source="wired_pc")
+                                        for n in mon.labels} if mon else {},
+                        "ookla_usual": {n: sqlite.usual_download(db_path, n, since, measurement_source="wired_pc_ookla")
+                                        for n in mon.labels} if mon else {},
                         "plans": {n: w.plan_mbps for n, w in mon.labels.items()} if mon else {},
                         "data_usage": (
                             mon.speedtest_data_usage()

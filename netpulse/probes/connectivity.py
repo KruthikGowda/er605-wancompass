@@ -1,18 +1,20 @@
-"""Low-rate DNS and HTTPS diagnosis for cycles where every ICMP target fails.
+"""Source-bound DNS, TLS reachability, and independent expected-response web checks.
 
 These checks are diagnostic only: they do not override the ICMP health score or WAN decision.
-Both sockets bind to the configured source IP, so the ER605 source policy selects that WAN.
+Every socket binds to the configured source IP, so the ER605 source policy selects that WAN.
 """
 
 from __future__ import annotations
 
 import ipaddress
+import errno
 import os
 import socket
 import ssl
 import struct
 import time
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 
 from netpulse.freshness import age_seconds
 
@@ -20,15 +22,47 @@ DNS_SERVER = "1.1.1.1"
 DNS_NAME = "example.com"
 HTTPS_IP = "1.1.1.1"
 HTTPS_NAME = "cloudflare-dns.com"
-CHECK_INTERVAL_SECONDS = 60
-ROUTINE_CHECK_INTERVAL_SECONDS = 120
+CHECK_INTERVAL_SECONDS = 30
+ROUTINE_CHECK_INTERVAL_SECONDS = 60
 RESULT_MAX_AGE_SECONDS = 180
 CHECK_TIMEOUT_SECONDS = 1.5
+WEB_ENDPOINTS = (("Cloudflare", "cp.cloudflare.com", "/generate_204"),
+                 ("Google", "www.gstatic.com", "/generate_204"))
 
 
-def check_interval_seconds(icmp_state: str) -> int:
+@dataclass(frozen=True)
+class WebCheck:
+    provider: str
+    ok: bool
+    status_code: int | None = None
+    error: str = ""
+    elapsed_ms: float = 0
+
+
+def internet_state(result) -> tuple[str, str]:
+    checks = result.web_checks
+    if not checks:
+        return "UNKNOWN", "Waiting for independent web checks"
+    if all(check.error == "source_unavailable" for check in checks):
+        return "MONITOR_ERROR", "The Pi cannot bind its configured probe address"
+    passed = sum(check.ok for check in checks)
+    if passed == len(WEB_ENDPOINTS):
+        if result.dns_ok:
+            return "ONLINE", "Both independent web endpoints and public DNS passed"
+        return "PARTIAL", "Both web endpoints respond, but the primary public DNS test failed"
+    if passed:
+        return "PARTIAL", "One web endpoint passed; the other failed. Internet is partially reachable"
+    if not result.dns_ok:
+        return "DNS_FAILURE", ("Public DNS failed; direct HTTPS still responds" if result.https_ok
+                               else "Public DNS and both web checks failed")
+    if any(check.status_code in (200, 301, 302, 303, 307, 308, 511) for check in checks):
+        return "RESTRICTED", "Web checks returned an unexpected page or redirect; a portal or restriction is possible"
+    return "NO_INTERNET", "DNS responds, but neither independent web check returned the expected response"
+
+
+def check_interval_seconds(icmp_state: str, application_state: str = "ONLINE") -> int:
     """Run faster diagnostics after ICMP outage; sample healthy paths less often."""
-    return (CHECK_INTERVAL_SECONDS if str(icmp_state).upper() == "OFFLINE"
+    return (CHECK_INTERVAL_SECONDS if str(icmp_state).upper() == "OFFLINE" or application_state not in ("ONLINE", "UNKNOWN")
             else ROUTINE_CHECK_INTERVAL_SECONDS)
 
 
@@ -46,8 +80,10 @@ class ConnectivityResult:
     diagnosis: str
     wan_dns_ok: bool | None = None
     icmp_state: str = "OFFLINE"
+    web_checks: tuple[WebCheck, ...] = ()
 
     def as_dict(self) -> dict:
+        state, reason = internet_state(self)
         return {
             "checked_at": self.checked_at,
             "dns_ok": self.dns_ok,
@@ -55,10 +91,14 @@ class ConnectivityResult:
             "wan_dns_ok": self.wan_dns_ok,
             "icmp_state": self.icmp_state,
             "diagnosis": self.diagnosis,
+            "internet_state": state,
+            "internet_reason": reason,
+            "web_checks": [check.__dict__ for check in self.web_checks],
         }
 
 
-def _dns_ok(source_ip: str, timeout: float, resolver_ip: str = DNS_SERVER) -> bool:
+def _dns_query(source_ip: str, timeout: float, resolver_ip: str = DNS_SERVER,
+               name: str = DNS_NAME) -> tuple[bytes, int, int] | None:
     """Query a numeric resolver directly, without needing local DNS to work first."""
     resolver = ipaddress.IPv4Address(resolver_ip)
     if (resolver.is_multicast or resolver.is_loopback or resolver.is_link_local
@@ -66,7 +106,7 @@ def _dns_ok(source_ip: str, timeout: float, resolver_ip: str = DNS_SERVER) -> bo
         return False
     resolver_ip = str(resolver)
     ident = struct.unpack("!H", os.urandom(2))[0]
-    labels = b"".join(bytes((len(label),)) + label.encode("ascii") for label in DNS_NAME.split(".")) + b"\0"
+    labels = b"".join(bytes((len(label),)) + label.encode("ascii") for label in name.split(".")) + b"\0"
     query = struct.pack("!HHHHHH", ident, 0x0100, 1, 0, 0, 0) + labels + struct.pack("!HH", 1, 1)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.settimeout(timeout)
@@ -85,49 +125,58 @@ def _dns_ok(source_ip: str, timeout: float, resolver_ip: str = DNS_SERVER) -> bo
             or (flags & 0x000F) != 0 or questions != 1 or answers == 0):
         return False
     question_name, question_end = _dns_name(response, 12)
-    if question_name != DNS_NAME.lower() or question_end + 4 > len(response):
+    if question_name != name.lower() or question_end + 4 > len(response):
         return False
     qtype, qclass = struct.unpack("!HH", response[question_end:question_end + 4])
     if qtype != 1 or qclass != 1:
         return False
-    return _has_expected_a_answer(response, question_end + 4, answers)
+    return response, question_end + 4, answers
+
+
+def _dns_ok(source_ip: str, timeout: float, resolver_ip: str = DNS_SERVER) -> bool:
+    answer = _dns_query(source_ip, timeout, resolver_ip)
+    return bool(answer and _has_expected_a_answer(*answer))
 
 
 def _has_expected_a_answer(packet: bytes, offset: int, answer_count: int) -> bool:
+    return bool(_answer_addresses(packet, offset, answer_count, DNS_NAME))
+
+
+def _answer_addresses(packet: bytes, offset: int, answer_count: int, name: str) -> list[str]:
     """Require a well-formed A answer for the requested name, following CNAMEs."""
     aliases: dict[str, str] = {}
-    addresses: set[str] = set()
+    addresses: dict[str, list[str]] = {}
     cursor = offset
     for _ in range(answer_count):
         owner, owner_end = _dns_name(packet, cursor)
         if owner is None or owner_end + 10 > len(packet):
-            return False
+            return []
         rr_type, rr_class, _ttl, rdlength = struct.unpack(
             "!HHIH", packet[owner_end:owner_end + 10]
         )
         rdata_start = owner_end + 10
         rdata_end = rdata_start + rdlength
         if rdata_end > len(packet):
-            return False
+            return []
         if rr_class == 1 and rr_type == 1 and rdlength == 4:
-            addresses.add(owner)
+            addresses.setdefault(owner, []).append(str(ipaddress.IPv4Address(packet[rdata_start:rdata_end])))
         elif rr_class == 1 and rr_type == 5:
             target, target_end = _dns_name(packet, rdata_start)
             if target is None or target_end != rdata_end:
-                return False
+                return []
             aliases[owner] = target
         cursor = rdata_end
 
-    current = DNS_NAME.lower()
+    current = name.lower()
     visited = set()
     for _ in range(len(aliases) + 1):
         if current in addresses:
-            return True
+            return addresses[current]
         if current in visited or current not in aliases:
-            return False
+            return []
         visited.add(current)
         current = aliases[current]
-    return False
+    return []
 
 
 def _dns_name(packet: bytes, start: int) -> tuple[str | None, int]:
@@ -186,6 +235,80 @@ def _https_ok(source_ip: str, timeout: float) -> bool:
             return line.startswith("HTTP/")
     finally:
         raw.close()
+
+
+def _web_check(source_ip: str, timeout: float, endpoint: tuple[str, str, str]) -> WebCheck:
+    """Small GET with source-bound DNS/TLS, a fixed destination, and an absolute deadline."""
+    provider, host, path = endpoint
+    started = time.monotonic()
+    deadline = started + max(1.0, timeout * 4)
+    status = None
+
+    def remaining():
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError()
+        return min(timeout, left)
+
+    try:
+        addresses, dns_error = [], None
+        for resolver in (DNS_SERVER, "8.8.8.8"):
+            try:
+                answer = _dns_query(source_ip, remaining(), resolver, name=host)
+                addresses = _answer_addresses(*answer, host) if answer else []
+                addresses = [address for address in addresses if ipaddress.ip_address(address).is_global]
+            except OSError as exc:
+                if exc.errno == errno.EADDRNOTAVAIL:
+                    raise
+                dns_error = exc
+            if addresses:
+                break
+        if not addresses:
+            if dns_error:
+                raise dns_error
+            return WebCheck(provider, False, error="dns_failed")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as raw:
+            raw.settimeout(remaining())
+            raw.bind((source_ip, 0))
+            raw.connect((addresses[0], 443))
+            raw.settimeout(remaining())
+            with ssl.create_default_context().wrap_socket(raw, server_hostname=host) as tls:
+                tls.settimeout(remaining())
+                tls.sendall(f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode("ascii"))
+                header = b""
+                while b"\r\n\r\n" not in header and len(header) <= 8192:
+                    tls.settimeout(remaining())
+                    block = tls.recv(min(1024, 8193 - len(header)))
+                    if not block:
+                        break
+                    header += block
+                if b"\r\n\r\n" not in header or len(header) > 8192:
+                    return WebCheck(provider, False, error="invalid_response")
+                head, body = header.split(b"\r\n\r\n", 1)
+                first = head.split(b"\r\n", 1)[0].split()
+                if len(first) >= 2 and first[0] in (b"HTTP/1.0", b"HTTP/1.1") and len(first[1]) == 3 and first[1].isdigit():
+                    status = int(first[1])
+                fields = [line.partition(b":") for line in head.split(b"\r\n")[1:]]
+                lengths = [value.strip() for key, separator, value in fields if key.lower() == b"content-length"]
+                valid_headers = all(separator for _, separator, _ in fields) and not any(
+                    key.lower() == b"transfer-encoding" for key, _, _ in fields)
+                ok = status == 204 and not body and valid_headers and (not lengths or lengths == [b"0"])
+                return WebCheck(provider, ok, status, "" if ok else "unexpected_response",
+                                round((time.monotonic() - started) * 1000, 1))
+    except ssl.SSLError:
+        error = "tls_failed"
+    except TimeoutError:
+        error = "timeout"
+    except OSError as exc:
+        error = "source_unavailable" if exc.errno == errno.EADDRNOTAVAIL else "connection_failed"
+    except ValueError:
+        error = "invalid_response"
+    return WebCheck(provider, False, status, error, round((time.monotonic() - started) * 1000, 1))
+
+
+def _web_checks(source_ip: str, timeout: float) -> tuple[WebCheck, ...]:
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="wan-web") as workers:
+        return tuple(workers.map(lambda endpoint: _web_check(source_ip, timeout, endpoint), WEB_ENDPOINTS))
 
 
 def diagnose(source_ip: str, now: float | None = None,
@@ -251,4 +374,5 @@ def diagnose(source_ip: str, now: float | None = None,
     if wan_dns_ok is not None:
         text += ("; the WAN-assigned DNS resolver responded" if wan_dns_ok
                  else "; the WAN-assigned DNS resolvers did not respond")
-    return ConnectivityResult(checked_at, dns_ok, https_ok, text, wan_dns_ok, normalized_state)
+    checks = _web_checks(source_ip, timeout)
+    return ConnectivityResult(checked_at, dns_ok, https_ok, text, wan_dns_ok, normalized_state, checks)

@@ -1,4 +1,4 @@
-🔴 Example ISP B is DOWN
+🔴 Example ISP B: ping checks are not responding
 why: no answer from any test server
 Example ISP A is healthy
 ---
@@ -6,7 +6,7 @@ Example ISP A is healthy
 Example ISP B is down, so Example ISP A is the better choice right now.
 (Recommendation only: nothing on the router was changed.)
 ---
-✅ Example ISP B is back online (was down for 12 min)
+✅ Example ISP B: ping replies resumed (no replies for 12 min)
 Still settling; you'll get a message when it's fully healthy.
 Example ISP A is healthy
 ---

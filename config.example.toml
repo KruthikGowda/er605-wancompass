@@ -90,6 +90,7 @@ presence_probe_interval_seconds = 60
 presence_confirm_misses = 3
 syslog_enabled = false      # optional ER605 DHCP allocation hints; router forwarding is separate/owner-enabled
 syslog_port = 514           # ER605 syslog convention; receiver accepts packets only from router.host
+traffic_usage_enabled = false # optional router-reported WAN/device counters; firmware may omit accelerated traffic
 
 [system_health]
 enabled = true
@@ -106,6 +107,7 @@ interval_days = 7
 keep = 8
 
 [telegram]
+# dashboard_url = "http://192.0.2.10:8080/"  # optional existing LAN/VPN dashboard; no login credentials
 # Easiest setup: sudo python3 -m tools.telegram_setup  (fills these in for you)
 enabled = false
 bot_token = ""

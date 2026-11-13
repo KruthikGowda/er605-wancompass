@@ -129,8 +129,11 @@ class Alerter:
             with self._rate_lock:
                 self._last_sent[key] = now
         categorized = getattr(self.notifier, "send_categorized", None)
+        reliable = getattr(self.notifier, "send_reliable", None)
         if delivery_category in self._category_suppressed and callable(categorized):
             categorized(text, delivery_category)
+        elif callable(reliable):
+            return reliable(text, key, critical)
         else:
             self.notifier.send(text)
         return True

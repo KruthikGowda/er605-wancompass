@@ -66,6 +66,8 @@ Backups default to disabled. Configure `directory` and, for mounted storage, `mo
 
 ### `[telegram]`
 
+Optional `dashboard_url` adds an Open dashboard button to Telegram panels. Use the existing LAN/VPN HTTP(S) address without credentials, query parameters, or fragments. Authentication and network reachability remain required; this setting does not publish the dashboard.
+
 `enabled`, `bot_token`, and `chat_id` enable the optional bot. Store real tokens only in the protected local configuration. `quiet_start`/`quiet_end` delay non-critical alerts; `digest_time` and `weekly_report_time` opt into daily/weekly reports. `device_activity_notifications` defaults to `false`; enabling it can disclose client activity to the configured chat. Telegram API acceptance does not prove the recipient saw a message.
 
 ## Ownership and opt-ins
@@ -83,3 +85,109 @@ Read-only router polling, route controls, Internet pause, presence pings, syslog
 - `NETPULSE_ROUTER_PIN=<sha256-fingerprint>` enables the optional certificate-pinning check within the live test suite. Treat the pin as deployment-specific configuration.
 
 The live suite is not a router write authorization and does not test ACL enforcement or client failover. Never run router-writing helpers unless the network owner explicitly authorized the named operation and the exact firmware has been verified.
+
+
+### Router-reported bandwidth observations
+
+`[router].traffic_usage_enabled = true` enables read-only native ER605 interface
+counters every 30 seconds and per-IP counters every 60 seconds. It defaults to
+`false`: frequent standalone API logins can end an open router admin session.
+Calls share the monitor API lock and respect pause, readiness, and authentication
+backoff. No router settings change. Interface and per-IP statistics must already
+be enabled on the router.
+
+WAN RX is download and WAN TX is upload, in decimal Mbps; daily bytes use decimal
+GB. Device rankings use router RX + TX matched to stable, unique DHCP identities.
+They are not per-WAN device accounting and may include routed LAN traffic. The
+date picker selects daily observations; live graphs always end at the present.
+Days follow the Pi local timezone. History lasts two days; daily totals 400 days.
+
+**WAN and device counters have different evidence.** Longer controlled tests on
+ER605 v2.30 firmware 2.3.3 Build 20251029 Rel.18054 showed WAN counters refreshing
+in approximately 30-second batches, with increases sufficient to cover the known
+payloads plus background traffic. Earlier immediate reads were too soon. This is
+not an exact accounting certification. In contrast, both the Pi DHCP address and
+its probe alias missed most test bytes in per-IP counters after refresh.
+
+The dashboard's primary rates now use the router's `rx_bps`/`tx_bps` fields, which
+are decimal kilobytes per second despite the names: multiply by 0.008 for Mbps.
+These are approximately 30-second averages, not speed tests or available capacity.
+The graph source selector separately offers byte-counter interval averages.
+Repeated nonzero cached snapshots retain their original sample time and do not
+create a fresh point or zero. After 75 seconds without an observable change,
+current native rates are unavailable. Reported idle zeroes are labeled because a
+separate cache refresh cannot be observed during inactivity. Native graph history
+is retained for two days; pre-existing byte history remains in counter-average mode.
+Daily usage always comes from accepted byte deltas, never integrated rate estimates.
+
+### DPI-captured device usage
+
+The collector reads DPI/logging state before and after each device counter read.
+The dashboard shows capture on, off, or unverified; stale or unverified capture
+hides current device rates. Device totals/rankings now use only accepted intervals
+bracketed by DPI and logging on. Earlier undercounted observations remain stored
+separately and are excluded from these totals. No past usage is reconstructed.
+Changes between DPI capture and legacy observation require a fresh baseline, so
+an interval crossing a detected mode change cannot be attributed to DPI capture.
+
+Per-device RX/TX may include overhead and routed LAN traffic and is not split by
+WAN. Coverage is accepted collection time, not a certification that all traffic
+was counted. DPI/logging state is sampled, so changes entirely between checks are
+not observable. The dashboard does not automatically enable DPI or alter routing.
+Permanent enablement remains an explicit owner decision after accounting and
+throughput acceptance; an unsuccessful acceptance leaves the original settings.
+
+Coverage is time with accepted counter deltas divided by elapsed time in the day;
+it does not measure the fraction of packets counted. First baselines, reboots,
+resets, changed identities, clock corrections, implausible deltas, and gaps over
+three minutes add no usage. Unchanged bytes with a nonzero native reported rate
+wait for refresh, then rebase after three minutes if still stale. Intervals across
+midnight are apportioned by time and marked estimated. Transactional baselines
+preserve totals across restarts without recounting. No earlier usage is reconstructed.
+## Dashboard navigation and freshness
+
+Overview shows combined current WAN traffic, observed daily data, native WAN
+charts, Internet evidence and probe-quality graphs. Devices, History and System
+have separate workspaces with direct anchor links and browser Back support.
+Appearance can follow the system or use a saved light/dark preference; fonts and
+assets remain local so the interface works without Internet access.
+
+Combined current traffic is unavailable if any WAN lacks a valid fresh rate.
+Daily sums include only observed WANs and identify partial coverage. Device
+rankings omit rows without qualified observations; capture-off/unknown states
+show an explanation while preserving qualified history on its recorded date.
+The Overview and Devices date selectors share the selected usage date.
+
+Live freshness uses the server's HTTP Date plus monotonic elapsed browser time,
+rather than assuming the Pi and viewing computer have identical wall clocks.
+The one-second HTTP Date precision is rounded conservatively forward. Without a
+valid Date header, browser time remains the fallback. Real missing/stale samples
+remain unavailable; missing evidence is never displayed as confirmed WAN failure.
+### Speed-test measurement sources
+
+The Overview speed cards identify the test device and exact test date/time.
+`wired_pc` observations use the existing speed-test trigger field; the dashboard
+keeps their graph points and normal-speed baseline separate from Pi measurements.
+The API exposes `wired_usual` alongside the Pi `usual` map. The manual button is
+explicitly labeled **Run Pi speed test**; it does not start a test on a wired PC.
+A failed latest attempt retains the earlier successful result with a warning.
+
+Source-bound speed connections resolve only addresses matching the configured
+source IP family. The HTTPS hostname, SNI and certificate verification remain
+unchanged; failures never fall back to an unbound connection. HTTP errors,
+truncated downloads and failed parallel streams cannot produce successful speed
+results. These checks prevent address-family mismatches and rejected responses
+from being confused with a slow WAN.
+
+An operator-run wired comparison uses bounded transfers and checks actual public
+egress before and after each persistent test flow. Temporary owner-approved PC
+routing is restored before results are published. When repeated runs are combined,
+the recorded rate is total transferred bytes divided by total transfer time.
+Such tests measure throughput under the test conditions, not guaranteed ISP
+capacity or simultaneous combined-WAN performance.
+
+Ookla observations use the `wired_pc_ookla` source tag. Their baseline and trend
+points are separate from both Pi and wired-PC Cloudflare observations, and the
+API exposes `ookla_usual` independently. The speed cards show the device and
+provider together; a change of provider does not create a false normal-speed
+comparison. Raw third-party test output stays in private operator storage.

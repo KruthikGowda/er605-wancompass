@@ -324,6 +324,22 @@ class Headlines(unittest.TestCase):
         self.assertIn("Example ISP A: 20 ms · no packet loss", text)
         self.assertNotIn("Cloudflare", text)
 
+    def test_unknown_measurement_never_reports_total_packet_loss(self):
+        w = wan("WAN1", "Example ISP A", "UNKNOWN")
+        w.update(loss_pct=100.0, errors=["Cannot assign requested address"])
+        text = summary.status_text({"wans": [w]})
+        self.assertIn("measurement unavailable", text)
+        self.assertIn("Monitoring unavailable", text)
+        self.assertNotIn("100%", text)
+        self.assertNotIn("Starting up", text)
+
+    def test_one_unknown_wan_cannot_make_both_connections_healthy(self):
+        h = summary.headline({"wans": [wan("WAN1", "Example ISP A", "HEALTHY"),
+                                       wan("WAN2", "Example ISP B", "UNKNOWN")]})
+        self.assertEqual(h["level"], "UNKNOWN")
+        self.assertIn("Example ISP B", h["text"])
+        self.assertNotIn("both connections are healthy", h["text"])
+
     def test_status_text_includes_fresh_dns_https_and_isp_dns_evidence(self):
         w = wan("WAN1", "Example ISP A", "HEALTHY")
         w["connectivity"] = {"checked_at": time.time() - 10, "icmp_state": "HEALTHY",

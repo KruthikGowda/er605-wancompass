@@ -21,6 +21,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from netpulse.notifications.durable import AlertOutbox
+from netpulse.notifications.menus import ControlMenus
 from typing import Callable, Protocol
 
 from netpulse.notifications.base import DEVICE_NOTICE_CATEGORY, Notifier
@@ -28,6 +30,9 @@ from netpulse.notifications.base import DEVICE_NOTICE_CATEGORY, Notifier
 log = logging.getLogger(__name__)
 
 BUTTONS = {
+    "🎛 Controls": "controls",
+    "📊 Speed results": "speeds",
+    "🔔 Alert settings": "alert_settings",
     "📶 Status": "status",
     "🩺 Pi health": "pi",
     "📈 Last 24h": "today",
@@ -47,7 +52,7 @@ BUTTONS = {
     "❔ Help / More": "more",
     "🏠 Main menu": "home",
 }
-COMMANDS = {"/start": "start", "/status": "status", "/pi": "pi", "/today": "today", "/week": "week",
+COMMANDS = {"/menu": "home", "/speeds": "speeds", "/start": "start", "/status": "status", "/pi": "pi", "/today": "today", "/week": "week",
             "/speed": "speed", "/mute": "mute",
             "/unmute": "unmute", "/omada": "omada", "/route": "route",
             "/route_confirm": "route_confirm", "/help": "help",
@@ -67,10 +72,10 @@ OWNER_ONLY = {"invite", "close", "people", "route", "route_confirm", "reserve", 
               "group_route", "group_confirm", "group_smart", "device", "devices"}
 OWNER_ONLY.update({"pause", "resume", "paused", "group_pause", "group_resume", "pause_confirm"})
 KEYBOARD = {
-    "keyboard": [[{"text": "📶 Status"}],
-                 [{"text": "📱 Devices"}],
-                 [{"text": "👥 Groups"}],
-                 [{"text": "❔ Help / More"}]],
+    "keyboard": [[{"text": "📶 Status"}, {"text": "📊 Speed results"}],
+                 [{"text": "📱 Devices"}, {"text": "👥 Groups"}],
+                 [{"text": "🎛 Controls"}, {"text": "🔔 Alert settings"}],
+                 [{"text": "❔ Help / More"}, {"text": "🏠 Main menu"}]],
     "resize_keyboard": True,
     "is_persistent": True,
 }
@@ -82,11 +87,19 @@ MORE_KEYBOARD = {
     "resize_keyboard": True,
     "is_persistent": True,
 }
+MEMBER_KEYBOARD = {
+    "keyboard": [[{"text": "📶 Status"}, {"text": "📊 Speed results"}],
+                 [{"text": "❔ Help / More"}, {"text": "🏠 Main menu"}]],
+    "resize_keyboard": True,
+    "is_persistent": True,
+}
 MAX_LEN = 4000  # Telegram limit is 4096
 INVITE_SECONDS = 120
 MAX_REQUESTS_PER_INVITE = 5
 MEMBERS_KEY = "telegram_members"
 MENU = [
+    {"command": "menu", "description": "🏠 Button controls and dashboard"},
+    {"command": "speeds", "description": "📊 Saved speed results; uses no test data"},
     {"command": "status", "description": "📶 How both connections are doing now"},
     {"command": "pi", "description": "🩺 Current Pi health"},
     {"command": "today", "description": "📈 Summary of the last 24 hours"},
@@ -141,22 +154,14 @@ class TelegramBot(Notifier):
     def __init__(self, token: str, chat_id: str, handlers: dict[str, Callable[[], str]],
                  profile: dict[str, str] | None = None, store: KeyValue | None = None,
                  api_base: str = "https://api.telegram.org"):
+        self._menus = ControlMenus(self)
         self._base = f"{api_base}/bot{token}/"   # api_base is overridable for the fake server in tests
         self.owners = parse_chat_ids(chat_id)
-        self.handlers = handlers
-        self._quick_picker = None
-        quick_hooks = (handlers.get("quick_choices"), handlers.get("quick_preview"),
-                       handlers.get("quick_apply"))
-        if all(callable(hook) for hook in quick_hooks):
-            from netpulse.notifications.picker import QuickPicker
-            self._quick_picker = QuickPicker(
-                *quick_hooks,
-                group_preview=handlers.get("quick_group_preview"),
-                group_apply=handlers.get("quick_group_apply"),
-                bandwidth=handlers.get("quick_bandwidth"),
-            )
+        self.set_handlers(handlers)
         self.profile = profile
         self.store = store
+        self._alerts = AlertOutbox(store)
+        self._send_retry_after = 0
         self._lock = threading.Lock()
         self.members: dict[str, str] = self._load_members()      # chat id -> display name
         self._invite_until = 0.0
@@ -174,6 +179,21 @@ class TelegramBot(Notifier):
 
     # --- public ---
 
+    def set_handlers(self, handlers: dict[str, Callable]) -> None:
+        """Bind service hooks before polling, including the reviewed button picker."""
+        self.handlers = handlers
+        self._quick_picker = None
+        quick_hooks = (handlers.get("quick_choices"), handlers.get("quick_preview"),
+                       handlers.get("quick_apply"))
+        if all(callable(hook) for hook in quick_hooks):
+            from netpulse.notifications.picker import QuickPicker
+            self._quick_picker = QuickPicker(
+                *quick_hooks,
+                group_preview=handlers.get("quick_group_preview"),
+                group_apply=handlers.get("quick_group_apply"),
+                bandwidth=handlers.get("quick_bandwidth"),
+            )
+
     @property
     def chat_ids(self) -> list[str]:
         with self._lock:
@@ -190,6 +210,10 @@ class TelegramBot(Notifier):
     def send(self, text: str, chat: str | None = None, markup: dict | None = None) -> None:
         """Send to one chat, or to every allowed chat when chat is None."""
         self._enqueue(text, chat, markup, None)
+
+    def send_reliable(self, text: str, key: str, critical: bool = False) -> bool:
+        """Persist the latest alert for a key, replacing any queued older incident state."""
+        return self._alerts.enqueue(key, text[:MAX_LEN], self.chat_ids, critical)
 
     def send_categorized(self, text: str, category: str) -> None:
         """Queue a non-identifying alert category for outcome telemetry."""
@@ -217,6 +241,8 @@ class TelegramBot(Notifier):
         with self._delivery_lock:
             stats = dict(self._delivery_counts)
         stats["queued"] = self._outbox.qsize()
+        stats.update(self._alerts.stats())
+        stats["queued"] += stats["durable_pending"]
         with self._delivery_lock:
             stats["categories"] = {
                 category: dict(counts)
@@ -262,27 +288,52 @@ class TelegramBot(Notifier):
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = json.load(resp)
         except urllib.error.HTTPError as e:
+            if method == "sendMessage" and e.code == 429:
+                try:
+                    delay = json.loads(e.read(4096)).get("parameters", {}).get("retry_after", 0)
+                    self._send_retry_after = min(3600, max(0, int(delay)))
+                except (ValueError, TypeError, OSError, AttributeError):
+                    self._send_retry_after = 0
             log.warning("telegram %s failed: HTTP %s", method, e.code)
             return None
         except Exception as e:  # noqa: BLE001
             log.warning("telegram %s failed (%s)", method, type(e).__name__)
             return None
-        return data if data.get("ok") else None
+        return data if isinstance(data, dict) and data.get("ok") else None
 
     def _sender(self) -> None:
         while not self._stop.is_set():
-            item = self._outbox.get()
+            self._deliver_pending_alert()
+            try:
+                item = self._outbox.get(timeout=1)
+            except queue.Empty:
+                continue
             text, chat, markup = item[:3]
             category = item[3] if len(item) > 3 else None
             if category is not None:
                 self._record_delivery(category=category, queued=-1)
             self._deliver_message(text, chat, markup, category)
 
+    def _deliver_pending_alert(self) -> None:
+        pending = self._alerts.due(self.chat_ids)
+        if not pending:
+            return
+        key, row = pending
+        target = row["targets"][0]
+        self._send_retry_after = 0
+        ok = self._call("sendMessage", {"chat_id": target, "text": row["text"],
+            "disable_web_page_preview": True,
+            "reply_markup": KEYBOARD if target in self.owners else MEMBER_KEYBOARD}) is not None
+        self._alerts.result(key, row["version"], target, ok, retry_after=self._send_retry_after)
+        if ok:
+            self._record_delivery(accepted=1)
+
     def _deliver_message(self, text: str, chat: str | None, markup: dict | None,
                          category: str | None = None) -> None:
         for target in ([chat] if chat else self.chat_ids):
             payload = {"chat_id": target, "text": text, "disable_web_page_preview": True,
-                       "reply_markup": markup or (KEYBOARD if self._is_allowed(target) else {"remove_keyboard": True})}
+                       "reply_markup": markup or ((KEYBOARD if target in self.owners else MEMBER_KEYBOARD)
+                                                  if self._is_allowed(target) else {"remove_keyboard": True})}
             for attempt in range(4):
                 if self._call("sendMessage", payload):
                     self._record_delivery(category=category, accepted=1)
@@ -344,18 +395,29 @@ class TelegramBot(Notifier):
         sender = str((msg.get("from") or {}).get("id", ""))
         private_owner = (chat_obj.get("type") == "private" and chat in self.owners and
                          sender in self.owners and sender == chat)
-        if self._quick_picker and private_owner:
+        if self._quick_picker and private_owner and parse_command(text) is None:
             result = self._quick_picker.message(text, chat, sender)
             if result is not None:
                 self.send(result[0], chat=chat, markup=result[1])
                 return
         cmd = parse_command(text) or "help"
+        self._menus.clear(chat)
         if self._quick_picker and private_owner and parse_command(text) is not None:
             # Navigating away from a list, such as opening More or returning
             # home, invalidates all previously displayed picker callbacks.
             self._quick_picker.clear(chat, sender)
         if cmd == "cancel" and self._quick_picker and private_owner:
             self.send("Cancelled. Nothing changed.", chat=chat)
+            return
+        if cmd in {"home", "start", "more", "controls", "alert_settings"} and chat_obj.get("type") == "private" and sender == chat:
+            if cmd in {"controls", "alert_settings"} and not private_owner:
+                self.send("Only the owner can do that.", chat=chat)
+                return
+            if cmd in {"home", "start"}:
+                self.send("WANCompass is ready. Your buttons are below.", chat=chat,
+                          markup=KEYBOARD if private_owner else MEMBER_KEYBOARD)
+            page = {"more": "reports", "controls": "controls", "alert_settings": "alerts"}.get(cmd, "home")
+            self._menus.show(page, chat, private_owner)
             return
         if cmd == "more":
             self.send("More from NetPulse\nReports, tools and alert controls.",
@@ -455,6 +517,8 @@ class TelegramBot(Notifier):
         who = str((cb.get("from") or {}).get("id", ""))
         msg = cb.get("message") or {}
         self._call("answerCallbackQuery", {"callback_query_id": cb.get("id")})
+        if self._menus.callback(cb):
+            return
         if self._quick_picker:
             picker_result = self._quick_picker.callback(cb)
             if picker_result is not None:

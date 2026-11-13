@@ -182,6 +182,28 @@ class PilotPreflightTests(unittest.TestCase):
 
 
 class TransactionTests(unittest.TestCase):
+    def test_opt_in_endpoint_egress_is_validated_and_new_phases_are_available(self):
+        probe=pilot.EndpointProbe('127.0.0.1','127.0.0.1',60,include_egress=True)
+        self.addCleanup(probe.close)
+        report_url=probe.url.replace(pilot.PROBE_PATH+'?t=','/report?t=')
+        origin=f'http://{probe.server.server_address[0]}:{probe.server.server_address[1]}'
+        def submit(ip):
+            body={'phase':probe.phase,'internet_ipv4_ok':True,'lan_ok':True,'public_ip':ip}
+            return urllib.request.urlopen(urllib.request.Request(report_url,data=json.dumps(body).encode(),
+                headers={'Content-Type':'application/json','Origin':origin},method='POST'),timeout=2)
+        with self.assertRaises(urllib.error.HTTPError):submit('127.0.0.1')
+        self.assertNotIn('baseline',probe.reports)
+        with submit('8.8.8.8') as response:self.assertEqual(response.status,204)
+        self.assertEqual(probe.wait_report('baseline',0)['public_ip'],'8.8.8.8')
+        probe.set_phase('prepared');probe.set_phase('blocked')
+        body={'phase':'blocked','internet_ipv4_ok':False,'lan_ok':True,'public_ip':None,
+              'checks':{'ipify':False,'cloudflare':False}}
+        request=urllib.request.Request(report_url,data=json.dumps(body).encode(),
+            headers={'Content-Type':'application/json','Origin':origin},method='POST')
+        with urllib.request.urlopen(request,timeout=2) as response:self.assertEqual(response.status,204)
+        self.assertEqual(probe.wait_report('blocked',0)['checks'],body['checks'])
+        probe.set_phase('restored')
+
     class FakeClient:
         def __init__(self):
             self.rows = []

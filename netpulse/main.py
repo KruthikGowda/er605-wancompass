@@ -13,6 +13,8 @@ import signal
 import sqlite3
 import sys
 import time
+from collections import deque
+import threading
 
 from netpulse import __version__, config as config_mod, summary
 from netpulse.config import Config, parse_hhmm
@@ -24,6 +26,7 @@ from netpulse.decision.group_advisor import GroupAdvisor
 from netpulse.health import metrics
 from netpulse.health.baseline import Baselines
 from netpulse.health.evaluator import Evaluation, State, WanTracker
+from netpulse.health.internet import InternetIncidents
 from netpulse.notifications.alerts import Alerter
 from netpulse.notifications.base import DEVICE_NOTICE_CATEGORY, Notifier, NullNotifier
 from netpulse.notifications.telegram import TelegramBot, parse_command, profile_texts
@@ -33,6 +36,7 @@ from netpulse.probes.connectivity import (
     check_interval_seconds as connectivity_check_interval,
     diagnose as diagnose_connectivity,
     result_is_fresh as connectivity_result_is_fresh,
+    internet_state,
 )
 from netpulse.probes.presence import (MAX_CLIENTS_PER_SCAN, MAX_CLIENT_ROWS_TO_SCAN,
                                       per_device_scan_interval_seconds,
@@ -48,6 +52,7 @@ from netpulse.router.pause import PauseControl
 from netpulse.router.actions import ActionControl
 from netpulse.devices.group_control import GroupControl
 from netpulse.router.traffic import DeviceTraffic
+from netpulse.router.usage import UsageCollector
 from netpulse.router.watch import RouterEvent, RouterWatch
 from netpulse.router.syslog import DhcpAllocation, RouterSyslogProtocol
 from netpulse.speedtest import SpeedResult, SpeedTester
@@ -134,6 +139,9 @@ class Monitor:
         self.action_control = ActionControl(self.router_control, self.pause_control) if self.router_control else None
         self.group_control = GroupControl(cfg.db_path, lambda: self.bot_handlers()["quick_choices"]())
         self.device_traffic = DeviceTraffic(router) if router else None
+        self.usage_collector = (UsageCollector(router,cfg.db_path,[w.name for w in cfg.wans])
+                                if router and cfg.router.traffic_usage_enabled else None)
+        board.set_extra("usage_collector",self.usage_collector)
         self.baselines = Baselines(storage.load_baselines())
         self.trackers = {w.name: WanTracker(w.name, cfg.window_seconds, cfg.thresholds) for w in cfg.wans}
         self.labels = {w.name: w for w in cfg.wans}
@@ -162,6 +170,11 @@ class Monitor:
         self.connectivity_started: dict[str, float] = {}
         self._connectivity_notified: set[str] = set()
         self._application_reachability: dict[str, dict] = {}
+        self.internet_incidents = InternetIncidents(sqlite.KeyValueFile(cfg.db_path))
+        self._internet_latest: dict[str, dict] = {}
+        self._live_lock = threading.Lock()
+        self._live_points = deque(maxlen=max(2, int(3600 / cfg.interval_seconds)) * len(cfg.wans))
+        board.set_extra("live_monitor", self)
         self._disk_low: bool | None = None
         self._memory_low: bool | None = None
         self._system_health_stale: bool | None = None
@@ -194,8 +207,14 @@ class Monitor:
             before, before_since = tracker.state, tracker.state_since
             tracker.add(metrics.Cycle(now, res))
             e = tracker.evaluate(now, self.baselines)
+            current = metrics.compute([metrics.Cycle(now, res)])
+            with self._live_lock:
+                self._live_points.append({"ts": now, "wan": name, "state": e.state.value,
+                    "rtt_ms": current.rtt_ms if not e.local_problem and not tracker.local_failures else None,
+                    "loss_pct": current.loss_pct if not e.local_problem and not tracker.local_failures else None,
+                    "jitter_ms": current.jitter_ms if not e.local_problem and not tracker.local_failures else None})
             evals[name] = e
-            if e.state != before:
+            if e.state != before or (e.local_problem and name not in self.local_problems):
                 changes.append((e, before, now - before_since))
         for e, before, lasted in changes:
             self._on_state_change(now, e, before, lasted, evals)
@@ -372,6 +391,30 @@ class Monitor:
         """Report confirmed ICMP outages or sustained DNS/HTTPS issues without steering WANs."""
         if not connectivity_result_is_fresh(result.checked_at, now):
             return
+        if result.web_checks:
+            self._internet_latest[wan] = result.as_dict()
+            try:
+                self.storage.set_value("internet_latest_v1", json.dumps(self._internet_latest))
+            except sqlite3.Error:
+                log.warning("Latest Internet evidence could not be saved")
+            state, reason = internet_state(result)
+            event = self.internet_incidents.observe(wan, state, result.checked_at)
+            if event:
+                title = ("Internet checks recovered" if event["recovered"] else
+                         "Internet partially reachable" if state == "PARTIAL" else
+                         "monitoring unavailable" if state == "MONITOR_ERROR" else "Internet checks failing")
+                evidence = "; ".join(f"{check.provider}: " + ("expected response" if check.ok else
+                    f"HTTP {check.status_code}" if check.status_code else check.error.replace("_", " "))
+                    for check in result.web_checks)
+                message = (f"{self.label(wan)}: {title}. {reason}.\n{evidence}.\n"
+                           f"Ping quality: {result.icmp_state.lower()}. Confirmed by repeated checks; "
+                           "a quota or account problem needs confirmation from your provider.")
+                sent = self.alerter.alert(message, key=f"internet-{wan}",
+                    critical=event["recovered"] or state != "PARTIAL", now=now)
+                if sent:
+                    self.pending_events.append((int(result.checked_at), "connectivity", wan, message))
+                    self.internet_incidents.acknowledge(wan, event)
+            return
         if result.icmp_state == State.OFFLINE.value:
             if wan in self._connectivity_notified:
                 return
@@ -438,14 +481,14 @@ class Monitor:
         emoji = summary.STATE_EMOJI[e.state.value]
         if before == State.OFFLINE:
             # The 5-minute window still contains the outage, so loss numbers would look alarming.
-            lines = [f"✅ {name} is back online (was down for {_duration(lasted)})"]
+            lines = [f"✅ {name}: ping replies resumed (no replies for {_duration(lasted)})"]
             if e.state != State.HEALTHY:
                 lines.append("Still settling; you'll get a message when it's fully healthy.")
         else:
             if e.state == State.HEALTHY:
                 head = f"{emoji} {name} is healthy again (was {WORD[before]} for {_duration(lasted)})"
             elif e.state == State.OFFLINE:
-                head = f"{emoji} {name} is DOWN"
+                head = f"{emoji} {name}: ping checks are not responding"
             else:
                 head = f"{emoji} {name} is {WORD[e.state]}"
             lines = [head]
@@ -1294,6 +1337,35 @@ class Monitor:
             self.router.pause(1800)
             return ("🛠 Router checks paused for 30 min, so you can use the Omada web page without "
                     "being logged out. Internet monitoring and alerts continue as normal.")
+
+        def speed_results():
+            now = self.clock()
+            rows = sqlite.speedtests(self.cfg.db_path, int(now - 30 * 86400), int(now) + 1)
+            latest = {}
+            for row in rows:
+                source = row.get("trigger") if row.get("trigger") in {"wired_pc", "wired_pc_ookla"} else "pi"
+                latest[(row["wan"], source)] = row
+            lines = ["📊 Saved speed results · last 30 days", "No new test was started."]
+            sources = {"pi": "Pi · Cloudflare (Pi-limited)", "wired_pc": "Wired PC · Cloudflare",
+                       "wired_pc_ookla": "Wired PC · Ookla"}
+            for wan in self.cfg.wans:
+                lines.append("\n" + (wan.label or wan.name))
+                found = False
+                for source, label in sources.items():
+                    row = latest.get((wan.name, source))
+                    if not row:
+                        continue
+                    found = True
+                    stamp = time.strftime("%d %b %H:%M", time.localtime(row["ts"]))
+                    if row.get("error"):
+                        lines.append(f"• {label}: latest attempt failed ({stamp}); open dashboard for details.")
+                    else:
+                        down, up = row.get("down_mbps"), row.get("up_mbps")
+                        fmt = lambda value: f"{value:.1f}" if isinstance(value, (int, float)) else "unavailable"
+                        lines.append(f"• {label}: ↓ {fmt(down)} / ↑ {fmt(up)} Mbps · {stamp}")
+                if not found:
+                    lines.append("No saved measurement in the last 30 days.")
+            return "\n".join(lines)
 
         def speed(chat=None):
             bot = self.alerter.notifier
@@ -2182,7 +2254,7 @@ class Monitor:
                 state = "Paused" if record.get("status") == "paused" else (
                     f"Needs review · {record.get('status', 'unknown')}")
                 lines.append(f"• {name} · {state} · {expiry}")
-            lines.append("Review or resume a device: /resume <MAC or exact name>. Group controls are in /groups.")
+            lines.append("To resume: tap Devices, select the device, then Choose action → Resume → Confirm. Groups works the same way.")
             return "\n".join(lines)
 
         def group_pause(text="", chat=None):
@@ -2239,6 +2311,10 @@ class Monitor:
         pause_confirm.wants_text = True
 
         return {
+            "speeds": speed_results,
+            "dashboard_url": lambda: self.cfg.telegram.dashboard_url,
+            "quick_control_status": lambda: self.action_control.state() if self.action_control else {
+                "actions": [], "enabled": False, "reason": "Router controls are not configured."},
             "speed": speed,
             "quick_choices": quick_choices,
             "quick_preview": quick_preview,
@@ -2310,12 +2386,12 @@ class Monitor:
                     "source_ip": labels[n].source_ip,
                     "state": e.state.value,
                     "state_since": self.trackers[n].state_since,
-                    "score": e.score,
-                    "loss_pct": e.metrics.loss_pct,
-                    "rtt_ms": e.metrics.rtt_ms,
-                    "jitter_ms": e.metrics.jitter_ms,
-                    "availability_pct": e.metrics.availability_pct,
-                    "rtt_ratio": e.rtt_ratio,
+                    "score": e.score if e.state != State.UNKNOWN else None,
+                    "loss_pct": e.metrics.loss_pct if e.state != State.UNKNOWN else None,
+                    "rtt_ms": e.metrics.rtt_ms if e.state != State.UNKNOWN else None,
+                    "jitter_ms": e.metrics.jitter_ms if e.state != State.UNKNOWN else None,
+                    "availability_pct": e.metrics.availability_pct if e.state != State.UNKNOWN else None,
+                    "rtt_ratio": e.rtt_ratio if e.state != State.UNKNOWN else None,
                     "reasons": e.reasons,
                     "why": [summary.plain_reason(r) for r in e.reasons],
                     "errors": e.errors,
@@ -2327,7 +2403,7 @@ class Monitor:
                             self.connectivity_results[n].checked_at, now)
                         else None
                     ),
-                    "targets": [t.__dict__ for t in e.metrics.targets],
+                    "targets": [t.__dict__ for t in e.metrics.targets] if e.state != State.UNKNOWN else [],
                 }
                 for n, e in evals.items()
             ],
@@ -2374,6 +2450,13 @@ class Monitor:
 
     def label(self, wan: str) -> str:
         return self.labels[wan].label or wan
+
+    def live_history(self) -> dict:
+        with self._live_lock:
+            points = list(self._live_points)
+        return {"points": points, "interval_seconds": self.cfg.interval_seconds,
+                "updated": points[-1]["ts"] if points else None,
+                "max_age_seconds": max(30, self.cfg.interval_seconds * 3)}
 
     def display(self, wan: str) -> str:
         """'Example ISP A (WAN1)' when the WAN has a label, else just 'WAN1'."""
@@ -2438,7 +2521,7 @@ async def run_async(cfg: Config) -> None:
     })
     web.start(cfg.web.host, cfg.web.port, board, cfg.db_path, cfg.web.auth_file)
     if bot:
-        bot.handlers = mon.bot_handlers()
+        bot.set_handlers(mon.bot_handlers())
         bot.start()
 
     for w in cfg.wans:
@@ -2461,6 +2544,7 @@ async def run_async(cfg: Config) -> None:
     last_prune = time.time()
     evals: dict[str, Evaluation] = {}
     router_task: asyncio.Task | None = None
+    usage_task: asyncio.Task | None = None
     next_router_tick = 0.0
     presence_task: asyncio.Task | None = None
     next_presence_tick = 0.0
@@ -2524,7 +2608,7 @@ async def run_async(cfg: Config) -> None:
                         result = task.result()
                         evaluation = evals.get(name) if evals else None
                         if (evaluation and evaluation.state != State.UNKNOWN
-                                and result.icmp_state == evaluation.state.value
+                                and (result.web_checks or result.icmp_state == evaluation.state.value)
                                 and connectivity_result_is_fresh(result.checked_at, now)):
                             mon.connectivity_results[name] = result
                             mon.on_connectivity_result(name, result, now)
@@ -2541,7 +2625,9 @@ async def run_async(cfg: Config) -> None:
                             and label.source_ip
                             and name not in connectivity_tasks
                             and now - mon.connectivity_started.get(name, 0.0)
-                            >= connectivity_check_interval(evaluation.state.value)):
+                            >= connectivity_check_interval(evaluation.state.value,
+                                internet_state(mon.connectivity_results[name])[0]
+                                if name in mon.connectivity_results else "UNKNOWN")):
                         mon.connectivity_started[name] = now
                         connectivity_tasks[name] = asyncio.create_task(asyncio.to_thread(
                             diagnose_connectivity, label.source_ip, now,
@@ -2562,6 +2648,14 @@ async def run_async(cfg: Config) -> None:
                 # Blocking HTTP in a worker thread: probing never waits for the router.
                 router_task = asyncio.create_task(asyncio.to_thread(
                     router.tick, now, advance_during_wait=True))
+            if usage_task and usage_task.done():
+                try:
+                    usage_task.result()
+                except Exception:
+                    log.warning("Router traffic collector is unavailable")
+                usage_task = None
+            if mon.usage_collector and usage_task is None:
+                usage_task = asyncio.create_task(asyncio.to_thread(mon.usage_collector.poll))
 
             if presence_task and presence_task.done():
                 try:
@@ -2685,6 +2779,8 @@ async def run_async(cfg: Config) -> None:
     finally:
         if syslog_transport:
             syslog_transport.close()
+        if usage_task:
+            usage_task.cancel()
         if route_expiry_task:
             route_expiry_task.cancel()
         if pause_expiry_task:

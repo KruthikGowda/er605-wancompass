@@ -176,7 +176,9 @@ class RouterControl:
         firmware_version = getattr(self.router.snap, "firmware_version", None)
         accepted_firmware = self._firmware_store.get("router_firmware_accepted")
         pending_firmware = self._firmware_store.get("router_firmware_pending")
-        acl_recovery_failed = self._firmware_store.get("pi_acl_recovery_failed") == "1"
+        from netpulse.router.trial_lock import trial_recovery_pending
+        acl_recovery_failed = (self._firmware_store.get("pi_acl_recovery_failed") == "1"
+                               or trial_recovery_pending())
         if firmware_version:
             if accepted_firmware is None:
                 # Establish the first observed version as the baseline. Future changes
@@ -664,6 +666,15 @@ class RouterControl:
             network = ipaddress.ip_network(str(lan_row.get("scope")), strict=False)
             if isinstance(dhcp_settings, list):
                 dhcp_settings = dhcp_settings[0] if len(dhcp_settings) == 1 else None
+            # ER605 2.4.10 moves the single LAN pool into ipRangePool.
+            # Multiple pools and mixed schemas require a separate compatibility review.
+            if isinstance(dhcp_settings, dict) and "ipRangePool" in dhcp_settings:
+                pools = dhcp_settings["ipRangePool"]
+                if (not isinstance(pools, list) or len(pools) != 1
+                        or not isinstance(pools[0], dict) or set(pools[0]) != {"start", "end"}
+                        or "ipaddr_start" in dhcp_settings or "ipaddr_end" in dhcp_settings):
+                    raise ValueError("Ambiguous DHCP pool")
+                dhcp_settings = {"ipaddr_start": pools[0]["start"], "ipaddr_end": pools[0]["end"]}
             start = ipaddress.ip_address(dhcp_settings["ipaddr_start"])
             end = ipaddress.ip_address(dhcp_settings["ipaddr_end"])
         except (ValueError, KeyError, TypeError, StopIteration):

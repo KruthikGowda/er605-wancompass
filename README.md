@@ -26,6 +26,8 @@ See [requirements](docs/REQUIREMENTS.md) for the practical host baseline and pre
 
 - Measures each WAN from its own configured probe address when the router has a matching policy route.
 - Tracks latency, packet loss, jitter, health scores, and trends.
+- Shows live per-WAN probe graphs with sample exploration, common scales, and explicit stale or missing data.
+- Separately checks Internet usability using source-bound DNS and expected HTTPS responses from two providers, with confirmed incidents and durable Telegram alert retries.
 - Provides monitor-only recommendations. Global `monitor` and `dry-run` modes never change routes.
 - Offers optional authenticated router inventory and owner-reviewed device WAN preferences. Device Smart WAN is separately opt-in.
 - Provides IPv4 Internet pause/resume controls that remain disabled until the exact firmware and deployment pass live acceptance.
@@ -52,3 +54,9 @@ sudo systemctl stop netpulse
 The service stores configuration in `/etc/netpulse/config.toml` and history in `/var/lib/netpulse/netpulse.db`. The first install prints a dashboard password once. Keep config, database, Telegram tokens, router credentials, backups, and device inventory private.
 
 For development, use Python 3.11+ and run `python3 -m unittest discover -s tests -t .`. See [CONTRIBUTING.md](CONTRIBUTING.md) and [AI contributor instructions](AGENTS.md).
+
+
+Optional router-reported usage adds live WAN upload/download graphs, observed
+daily totals with collection coverage, and DHCP-identified device rankings.
+Counter completeness was not established on the tested ER605; these are not ISP
+billing totals. See [usage configuration](docs/CONFIGURATION.md#router-reported-bandwidth-observations).

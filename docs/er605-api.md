@@ -211,3 +211,175 @@ python3 tools/adb_acl_probe.py \
 This reporter does not change phone settings. It refuses if mobile data is enabled, the reviewed MAC/IP is not on the active Wi-Fi network, a VPN is active, HTTPS validation fails, or a probe phase changes during a request. It sends only the phase result (IPv4 Internet pass/fail and LAN reachability) to the Pi.
 
 The pilot starts an independent Pi cleanup watchdog before stopping the NetPulse service, writes one temporary rule, and removes that exact unchanged rule. On interruption or reboot, a root recovery unit attempts cleanup before the main service starts. A changed or ambiguous rule is not deleted automatically and keeps controls locked for manual review. The watchdog cannot run if the Pi is powered off, and timed cleanup is not router-native. The bounded pilot is not evidence of permanent pause safety or general dual-WAN behavior.
+
+
+## Native usage counters (read only)
+
+The optional collector reads `ifstat/switch`, `ifstat/list`, `ipstats/setting`,
+`ipstats/list`, `dhcps/client`, `dpi/dpi_setting`, and public uptime. `WAN/LAN2` maps to WAN2;
+interface `rx_bytes`/`tx_bytes` are cumulative download/upload observations.
+Native `rx_bps`/`tx_bps` are integer decimal kB/s on the tested firmware. The
+conversion is `Mbps = kB/s * 0.008`. Changes in cumulative WAN bytes divided by the
+native rate corroborated an approximately 30-second reporting window. Primary
+rates and their history use these fields; byte-delta interval averages remain a
+separate view and determine daily usage. Controlled DPI-qualified transfers corroborated per-IP RX as client download
+and TX as client upload. The API retains RX/TX aliases for compatibility; the
+dashboard labels the qualified rates download/upload. Duplicate or changing DHCP identities are excluded.
+
+### Counter acceptance and device accounting investigation
+
+Longer source-bound tests corrected the initial immediate-read interpretation:
+WAN counters can stay identical until the next reporting batch. Their refreshed
+increases covered the known transfer sizes, although simultaneous background
+traffic prevents proving exact capture. Per-IP counts remained incomplete for
+both the Pi's normal DHCP address and its policy-routed probe alias. A 2 MB
+single-flow download added about 7 KB RX to the primary-address counter, whereas
+16 shorter downloads totaling 2 MB added about 100 KB. Each address had exactly
+one row. This makes duplicate parsing, aliases alone, and unit conversion
+insufficient explanations; the pattern is consistent with flow-offload bypass.
+A subsequent explicitly approved DPI/logging trial changed only those two
+switches and restored both to off after exact read-back. It did not independently
+toggle hardware offload, so the precise bypass mechanism remains an inference.
+
+[TP-Link's older offload explanation](https://community.tp-link.com/en/smart-home/forum/topic/502180)
+confirms a client-statistics limitation on earlier ER605 hardware/firmware. It is
+supporting evidence, not an exact-version acceptance result.
+
+As checked on 2026-11-12, the
+[2.4.10 release](https://support.omadanetworks.com/us/download/firmware/er605/v2)
+explicitly includes v2.30 and lists controller 6.3.0 compatibility. Its published
+fixes do not claim complete accelerated per-client accounting. The earlier
+[2.4.3 notes](https://static.tp-link.com/upload/firmware/2026/202606/20260603/ER605%28UN%29_V2_2.4.3_Release%20Note.pdf)
+mention reduced traffic-statistics resource consumption, not an accuracy fix.
+Firmware updates are not part of counter collection or automatic deployment.
+
+The [v2.30 datasheet](https://static.tp-link.com/upload/product-overview/2025/202511/20251117/ER605%28UN%292.30_Datasheet.pdf)
+includes DPI. The [current DPI guide](https://support.omadanetworks.com/in/document/13241/)
+describes standalone DPI/logging and software-controller client analytics.
+Some hardware controllers omit the User view. Omada adoption alone is not proof
+of complete accounting; DPI/logging needs a separate test, including normal DHCP
+clients, unknown applications, both directions/WANs, refresh delays, and CPU/speed
+impact. No blocking rules are needed for an analytics-only trial. Exact settings
+must be read back, privately backed up, and restored after a bounded trial unless
+the owner explicitly approves keeping them.
+
+### Bounded DPI/logging acceptance
+
+On the same exact firmware, a separate owner-approved trial compared DPI/logging
+off and on using three Pi-owned source addresses: the ordinary DHCP address and
+one probe alias per WAN. Each source downloaded 4 MB and uploaded 1 MB in each
+phase; all transfers succeeded. After the reporting refresh, combined per-IP
+counter deltas with inspection off were only 132 bytes for the primary address
+and 5,880 bytes for each alias. With inspection on, they were approximately
+5.77 MB, 5.40 MB, and 5.53 MB respectively. Protocol/control traffic means these
+are not exact payload or billing totals, but the order-of-magnitude accounting
+improvement was clear in both counter directions. Application/category logs
+also populated after an additional delay.
+
+The two switches were on for about 132 seconds and restored to their original
+off/off state, with read-back, a separate deadline/reboot recovery mechanism,
+and post-restoration WAN web checks. The monitoring service resumed without
+observed login rejection or traceback. Recovery units were removed after verified
+cleanup; credentials, application logs, addresses, and full measurements remain
+private and are not included here.
+
+Router memory samples rose from 32% to 44%. Short transfer timings and CPU
+snapshots do not establish sustained throughput, multi-WAN capacity, long-term
+stability, or completeness for all applications/clients. DPI is an accounting
+candidate on the existing firmware; permanent enablement requires separate owner
+authorization and an appropriately capable test host for full-speed acceptance.
+This result does not require a firmware update or controller adoption, and does
+not establish that adopting a controller alone corrects accounting.
+
+See [configuration and coverage semantics](CONFIGURATION.md#router-reported-bandwidth-observations).
+
+
+### Device provenance in the dashboard
+
+The usage store retains legacy `device` observations and DPI-qualified
+`device_dpi` observations separately. Device polling verifies DPI and logging
+state on both sides of a counter read; changed/unknown state invalidates that
+sample. Missing identities and transitions invalidate both kinds of baselines
+before new deltas are accepted. Daily DPI totals survive disabling DPI and service
+restarts. Current rates require fresh DPI state and a fresh qualified delta;
+older undercounted observations never become qualified usage through a setting
+change. State reads share the existing router API lock and never perform writes.
+
+
+### Wired throughput acceptance and rollback
+
+An owner-approved gigabit-wired PC test used temporary per-device DHCP/policy
+objects, four parallel TLS connections, and egress checks before and after each
+transfer. Two repetitions per WAN/direction were collected with DPI off, on,
+and off again; completed payload was 7.68 GB. A provider-rejected request size was
+not counted as a speed result. A routing read-back that did not match actual
+forwarding was also rejected; recreating only the trial-owned policy rule allowed
+subsequent tests to verify the intended WAN. In-place route read-back alone is
+not sufficient evidence of forwarding behavior.
+
+The acceptance gate required stable off-state brackets and DPI throughput within
+10% of baseline for both WANs/directions. WAN1 off-state download samples ranged
+from about 408 to 650 Mbps, versus 372 to 467 Mbps with DPI on; the off-state
+baseline drifted by more than 20%. WAN2 download samples stayed near 210 Mbps
+in both modes. These observations do not isolate an exact DPI penalty, but do
+not establish safe full-speed operation on both WANs. The gate failed, and DPI
+and logging were restored to off. All temporary PC router objects and saved
+routing state were restored; the recovery guard verified cleanup before monitoring
+resumed. Permanent DPI enablement was not performed. The dashboard's new
+qualification logic remains useful while capture is off and avoids presenting
+legacy undercounted observations as complete device usage.
+
+### ER605 v2.30 firmware 2.4.10 compatibility
+
+An owner-approved configuration-preserving upgrade from 2.3.3 Build 20251029
+Rel.18054 to **2.4.10 Build 20260916 Rel.63334** completed after exporting the
+router configuration and saving the official image and physical-recovery
+instructions offline. The downloaded image matched the official v2.30 support
+list. A configuration backup does not guarantee firmware downgrade or recovery;
+the vendor's recovery mode requires a person at the router.
+
+Authenticated before/after reads preserved policy routes, DHCP reservations,
+balancing settings and LAN address/pool values. The new API adds `uniq_id` to
+IP groups and migrates `dhcps/lan` from `ipaddr_start`/`ipaddr_end` to
+`ipRangePool: [{"start": "...", "end": "..."}]`, adding
+`allowInternetAccess`. Reservation previews and fresh apply-time checks support
+the verified single-pool format. Mixed schemas, multiple pools, missing fields,
+non-IPv4 ranges and invalid bounds remain rejected. Existing firmware review,
+preview, explicit confirmation and exact reservation read-back remain required.
+Strict `Only` WAN routing remains unavailable.
+
+The native WAN and `ipstats/list` counter schemas remain available. Firmware
+installation alone does not establish complete per-device accounting or safe
+DPI throughput. Those require a separate source/egress-verified comparison.
+
+The subsequent gigabit-wired PC retest completed 24 valid, egress-verified
+measurements with 7.68 GB of transfer payload, retaining the previous acceptance
+criteria. Each cell below is the mean of two measurements, download/upload Mbps:
+
+| WAN | DPI off before | DPI on | DPI off after |
+| --- | --- | --- | --- |
+| WAN1 | 456.5 / 676.2 | 352.0 / 435.7 | 454.4 / 502.4 |
+| WAN2 | 214.0 / 201.6 | 210.0 / 205.6 | 210.0 / 203.0 |
+
+WAN1 did not pass: its final download repetitions varied by more than 25%,
+upload baselines drifted by more than 20%, and DPI-on results were lower. This
+does not isolate a precise DPI penalty or establish the ISP's maximum capacity.
+WAN2 showed little difference. The new firmware still substantially undercounted
+per-device traffic with DPI/logging off; with both on, counters registered
+gigabytes, including traffic beyond the known payload. That is evidence of
+capture activity, not proof of complete or billing-accurate device accounting.
+
+Changing DPI returned a lost acknowledgement followed by temporary error `1015`.
+The new native UI treats this as configuration applying and polls the firmware
+read until ready. The operator helper was updated to wait for a bounded exact
+state read-back without repeating the setting write. The first attempt's recovery
+restored the original state before the resumed comparison; its valid baseline
+measurements and payload spending were retained.
+
+The final acceptance failed. DPI/logging were read back off; all temporary PC
+DHCP, policy, group and scope objects were removed, the previous saved route was
+restored, and monitoring resumed. The dashboard continues to expose native WAN
+rates and daily WAN totals while withholding unqualified current device usage.
+
+References: [official firmware](https://support.omadanetworks.com/en/download/firmware/er605/v2.30/)
+and [physical recovery procedure](https://support.omadanetworks.com/us/document/13056/).

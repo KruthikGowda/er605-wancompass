@@ -90,10 +90,16 @@ class TLSStream:
 
 
 class ConnectivityTests(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(connectivity, "_web_checks", return_value=())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_routine_checks_are_spaced_out_and_offline_diagnosis_stays_fast(self):
-        self.assertEqual(connectivity.check_interval_seconds("HEALTHY"), 120)
-        self.assertEqual(connectivity.check_interval_seconds("DEGRADED"), 120)
-        self.assertEqual(connectivity.check_interval_seconds("OFFLINE"), 60)
+        self.assertEqual(connectivity.check_interval_seconds("HEALTHY"), 60)
+        self.assertEqual(connectivity.check_interval_seconds("DEGRADED"), 60)
+        self.assertEqual(connectivity.check_interval_seconds("OFFLINE"), 30)
+        self.assertEqual(connectivity.check_interval_seconds("HEALTHY", "NO_INTERNET"), 30)
 
     def test_only_fresh_router_dns_configuration_is_used(self):
         router = SimpleNamespace(poll_seconds=600, snap=SimpleNamespace(
@@ -214,6 +220,7 @@ class ConnectivityTests(unittest.TestCase):
             self.assertEqual(result.as_dict(), {
                 "checked_at": 123.0, "dns_ok": dns_ok, "https_ok": https_ok,
                 "wan_dns_ok": None, "icmp_state": "OFFLINE", "diagnosis": expected,
+                "internet_state": "UNKNOWN", "internet_reason": "Waiting for independent web checks", "web_checks": [],
             })
 
     def test_diagnosis_describes_application_checks_when_icmp_is_healthy(self):

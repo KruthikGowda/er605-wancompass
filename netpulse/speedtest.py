@@ -10,16 +10,18 @@ Measures: download and upload (parallel streams, fixed size, time-capped), idle
 latency, and latency *while downloading* ("bufferbloat": the lag you feel in calls
 and games when the line is busy).
 
-Limits: a Raspberry Pi 3 B+ tops out around 220 Mbps, so results show dips
-clearly but can't confirm a full 200/300 Mbps plan.
+Limits: the Pi's Ethernet and power can limit its measurements. Wired PC
+measurements are recorded separately so their baselines are not mixed.
 """
 
 from __future__ import annotations
 
 import http.client
+import ipaddress
 import json
 import logging
 import ssl
+import socket
 import statistics
 import subprocess
 import threading
@@ -41,7 +43,7 @@ CHUNK = 64 * 1024
 class SpeedResult:
     wan: str
     ts: float
-    trigger: str                  # "scheduled" | "manual"
+    trigger: str                  # "scheduled" | "manual" | "wired_pc" | "wired_pc_ookla"
     down_mbps: float | None = None
     up_mbps: float | None = None
     idle_ms: float | None = None
@@ -64,9 +66,35 @@ class SpeedResult:
         return d
 
 
-def _conn(source_ip: str, timeout: float) -> http.client.HTTPSConnection:
-    return http.client.HTTPSConnection(HOST, timeout=timeout, context=ssl.create_default_context(),
+def _source_bound_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None):
+    """Resolve only the source's IP family, retaining DNS failover and source binding."""
+    if not source_address:
+        return socket.create_connection(address, timeout)
+    family = socket.AF_INET if ipaddress.ip_address(source_address[0]).version == 4 else socket.AF_INET6
+    host, port = address
+    candidates = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
+    error = None
+    for _, _, _, _, target in candidates:
+        try:
+            return socket.create_connection((target[0], port), timeout, source_address)
+        except OSError as exc:
+            error = exc
+    if error:
+        raise error
+    raise OSError("No speed-server address matches the configured source IP family")
+
+
+def _https_connection(host: str, source_ip: str, timeout: float) -> http.client.HTTPSConnection:
+    conn = http.client.HTTPSConnection(host, timeout=timeout, context=ssl.create_default_context(),
                                        source_address=(source_ip, 0) if source_ip else None)
+    if source_ip:
+        # HTTPConnection's socket factory hook leaves TLS/SNI on the original host.
+        conn._create_connection = _source_bound_connection
+    return conn
+
+
+def _conn(source_ip: str, timeout: float) -> http.client.HTTPSConnection:
+    return _https_connection(HOST, source_ip, timeout)
 
 
 def trace(source_ip: str, timeout: float = 10) -> dict:
@@ -85,8 +113,7 @@ def trace(source_ip: str, timeout: float = 10) -> dict:
 
 def origin_asns(public_ip: str, source_ip: str, timeout: float = 8) -> set[str]:
     """Return the routed origin ASN(s) for the observed egress IP using RIPEstat."""
-    c = http.client.HTTPSConnection(ASN_HOST, timeout=timeout, context=ssl.create_default_context(),
-                                    source_address=(source_ip, 0) if source_ip else None)
+    c = _https_connection(ASN_HOST, source_ip, timeout)
     try:
         c.request("GET", "/data/network-info/data.json?" + urlencode({"resource": public_ip}),
                   headers={"User-Agent": UA})
@@ -119,12 +146,17 @@ def _transfer(source_ip: str, total_bytes: int, streams: int, deadline_s: float,
                 body = b"0" * per
                 t0 = time.monotonic()
                 c.request("POST", "/__up", body=body, headers={"User-Agent": UA, "Content-Type": "text/plain"})
-                c.getresponse().read()
+                r = c.getresponse()
+                if r.status != 200:
+                    raise OSError(f"speed server HTTP {r.status}")
+                r.read()
                 t1 = time.monotonic()
                 moved[i] = per
             else:
                 c.request("GET", f"/__down?bytes={per}", headers={"User-Agent": UA})
                 r = c.getresponse()
+                if r.status != 200:
+                    raise OSError(f"speed server HTTP {r.status}")
                 t0 = time.monotonic()
                 while moved[i] < per and time.monotonic() < stop_at:
                     data = r.read(CHUNK)
@@ -132,11 +164,14 @@ def _transfer(source_ip: str, total_bytes: int, streams: int, deadline_s: float,
                         break
                     moved[i] += len(data)
                 t1 = time.monotonic()
+                if not moved[i] or (moved[i] < per and time.monotonic() < stop_at):
+                    raise OSError("speed server returned an incomplete download")
             with lock:
                 spans.append((t0, t1))
-        except OSError as e:
+        except (OSError, http.client.HTTPException) as e:
             with lock:
-                errors.append(type(e).__name__)
+                moved[i] = 0
+                errors.append(str(e) or type(e).__name__)
         finally:
             c.close()
 
@@ -145,7 +180,9 @@ def _transfer(source_ip: str, total_bytes: int, streams: int, deadline_s: float,
         t.start()
     for t in threads:
         t.join(deadline_s + 10)
-    if not spans:
+    if any(t.is_alive() for t in threads):
+        raise OSError("speed transfer exceeded its time limit")
+    if errors or not spans:
         raise OSError(f"{'upload' if upload else 'download'} failed ({', '.join(errors) or 'no data'})")
     seconds = max(s[1] for s in spans) - min(s[0] for s in spans)
     return sum(moved), max(seconds, 1e-3)

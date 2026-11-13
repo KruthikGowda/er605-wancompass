@@ -248,13 +248,20 @@ def build_acl_row(mac: str, name: str, states: tuple[str, ...] | None = None) ->
 class EndpointProbe:
     """Short-lived Pi LAN page that proves phone-originated IPv4 and LAN heartbeat."""
 
-    def __init__(self, bind_host: str, candidate_ip: str, ttl_seconds: int = 480):
+    def __init__(self, bind_host: str, candidate_ip: str, ttl_seconds: int = 480, *, include_egress=False,
+                 native_flow=False):
+        if type(native_flow) is not bool or (native_flow and not include_egress):
+            raise ValueError('Native flow evidence requires explicit egress mode.')
         if not ipaddress.IPv4Address(bind_host).is_private:
             raise PilotError("The probe server must bind to the Pi's private IPv4 LAN address.")
         self.candidate_ip = str(ipaddress.IPv4Address(candidate_ip))
         self.token = secrets.token_urlsafe(24)
         self.expires_at = time.time() + min(max(int(ttl_seconds), 60), 600)
         self.phase = "baseline"
+        self.include_egress = include_egress
+        self.native_flow = native_flow
+        self.barrier_started = False
+        self.closed = False
         self.reports: dict[str, dict] = {}
         self._condition = threading.Condition()
         owner = self
@@ -289,13 +296,26 @@ class EndpointProbe:
                     self._send(404, b"not found", "text/plain; charset=utf-8")
                     return
                 if parsed.path == PROBE_PATH:
-                    body = _probe_html(owner.token).encode("utf-8")
+                    body = (b'Native phone diagnostic endpoint. The reviewed USB reporter supplies connection evidence; this page does not run browser probes.'
+                            if owner.native_flow else _probe_html(owner.token,include_egress=owner.include_egress).encode("utf-8"))
                     self._send(200, body, "text/html; charset=utf-8")
                 elif parsed.path == "/state":
                     with owner._condition:
                         payload = json.dumps({"phase": owner.phase,
-                                              "expires_in": max(0, int(owner.expires_at - time.time()))})
+                                              "expires_in": max(0, int(owner.expires_at - time.time())),
+                                              **({'native_flow':True,'barrier_waiting':owner.barrier_started}
+                                                 if owner.native_flow else {})})
                     self._send(200, payload.encode(), "application/json")
+                elif parsed.path == '/barrier' and owner.native_flow:
+                    with owner._condition:
+                        if owner.phase != 'prepared' or owner.barrier_started or owner.closed:
+                            self._send(409,b'barrier unavailable','text/plain');return
+                        owner.barrier_started = True
+                        deadline = min(time.monotonic()+40,time.monotonic()+max(0,owner.expires_at-time.time()))
+                        while owner.phase == 'prepared' and not owner.closed and time.monotonic()<deadline:
+                            owner._condition.wait(min(1,deadline-time.monotonic()))
+                        released = owner.phase == 'blocked' and not owner.closed
+                    self._send(200 if released else 409,b'released' if released else b'cancelled','text/plain')
                 else:
                     self._send(404, b"not found", "text/plain; charset=utf-8")
 
@@ -325,6 +345,31 @@ class EndpointProbe:
                         return
                     owner.reports[owner.phase] = {"internet_ipv4_ok": data["internet_ipv4_ok"],
                                                   "lan_ok": True}
+                    if owner.include_egress:
+                        try:
+                            public_ip=str(ipaddress.IPv4Address(data['public_ip'])) if data['internet_ipv4_ok'] else None
+                            if data['internet_ipv4_ok'] and not ipaddress.IPv4Address(public_ip).is_global:raise ValueError
+                            if not data['internet_ipv4_ok'] and data.get('public_ip') is not None:raise ValueError
+                        except (KeyError,ValueError,TypeError):
+                            owner.reports.pop(owner.phase,None)
+                            self._send(400,b'bad egress report','text/plain');return
+                        owner.reports[owner.phase]['public_ip']=public_ip
+                        if owner.native_flow:
+                            from netpulse.router.flow_evidence import validate_flow_evidence
+                            from netpulse.router.compatibility import CompatibilityError
+                            try: evidence=validate_flow_evidence(data)
+                            except (CompatibilityError,KeyError,TypeError):
+                                owner.reports.pop(owner.phase,None)
+                                self._send(400,b'bad native evidence','text/plain');return
+                            owner.reports[owner.phase].update(evidence)
+                        elif owner.phase=='blocked':
+                            checks=data.get('checks')
+                            if (not isinstance(checks,dict) or set(checks)!={'ipify','cloudflare'}
+                                    or any(type(v) is not bool for v in checks.values())
+                                    or any(checks.values())!=data['internet_ipv4_ok']):
+                                owner.reports.pop(owner.phase,None)
+                                self._send(400,b'bad target checks','text/plain');return
+                            owner.reports[owner.phase]['checks']=checks
                     owner._condition.notify_all()
                 self._send(204, b"", "text/plain")
 
@@ -341,7 +386,7 @@ class EndpointProbe:
         return f"http://{self.server.server_address[0]}:{self.server.server_address[1]}{PROBE_PATH}?t={self.token}"
 
     def set_phase(self, phase: str) -> None:
-        if phase not in ("blocked", "recovery"):
+        if phase not in (("prepared","blocked","recovery","restored") if self.include_egress else ("blocked", "recovery")):
             raise ValueError("invalid probe phase")
         with self._condition:
             self.phase = phase
@@ -357,12 +402,15 @@ class EndpointProbe:
             return dict(self.reports[phase])
 
     def close(self) -> None:
+        with self._condition:
+            self.closed = True
+            self._condition.notify_all()
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
 
 
-def _probe_html(token: str) -> str:
+def _probe_html(token: str, *, include_egress=False) -> str:
 # CORS fetch uses the explicit IPv4-only ipify endpoint; same-origin POST proves
 # the LAN heartbeat still reaches the Pi when the public probe is blocked.
     return f'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -374,21 +422,35 @@ const token={json.dumps(token)}, stateUrl="/state?t="+encodeURIComponent(token),
 let phase="", sent=false, timer=null, generation=0;
 function validIPv4(value) {{ const parts=String(value||"").split(".");
   return parts.length===4 && parts.every(x=>/^\\d{{1,3}}$/.test(x) && Number(x)>=0 && Number(x)<=255); }}
-function report(ok, expectedPhase, expectedGeneration) {{
+function report(ok, expectedPhase, expectedGeneration, publicIp=null, checks=null) {{
   if(sent || phase!==expectedPhase || generation!==expectedGeneration) return; sent=true; clearTimeout(timer);
   const controller=new AbortController(), abort=setTimeout(()=>controller.abort(),5000);
   fetch(reportUrl,{{method:"POST",headers:{{"Content-Type":"application/json"}},
-    body:JSON.stringify({{phase:expectedPhase,internet_ipv4_ok:ok,lan_ok:true}}),signal:controller.signal}}).then(response=>{{
+    body:JSON.stringify({{phase:expectedPhase,internet_ipv4_ok:ok,lan_ok:true{',public_ip:ok?publicIp:null,checks:checks' if include_egress else ''}}}),signal:controller.signal}}).then(response=>{{
       if(!response.ok) throw new Error("report rejected");
       document.getElementById("state").textContent=expectedPhase+": result received; waiting for next check";
     }}).catch(()=>{{document.getElementById("state").textContent="Pi heartbeat failed";}}).finally(()=>clearTimeout(abort));
 }}
 async function probe() {{ sent=false;
   const expectedPhase=phase, expectedGeneration=++generation, controller=new AbortController();
-  timer=setTimeout(()=>{{controller.abort();report(false,expectedPhase,expectedGeneration);}},10000);
-  try {{ const response=await fetch({json.dumps(IPIFY_IPV4)}+"&n="+Date.now(),{{mode:"cors",cache:"no-store",signal:controller.signal}});
+  const observedChecks={{ipify:false,cloudflare:false}};let reportedIp=null;
+  timer=setTimeout(()=>{{controller.abort();{'report(observedChecks.ipify||observedChecks.cloudflare,expectedPhase,expectedGeneration,reportedIp,observedChecks)' if include_egress else 'report(false,expectedPhase,expectedGeneration)'};}},10000);
+  try {{
+    if({json.dumps(include_egress)} && (expectedPhase==='baseline'||expectedPhase==='blocked')){{
+      async function external(name,url,trace){{
+        try{{const response=await fetch(url,{{mode:"cors",cache:"no-store",signal:controller.signal}});
+          if(!response.ok)throw new Error('bad external response');
+          const text=await response.text();const value=trace?((/^ip=(.+)$/m.exec(text)||[])[1]):JSON.parse(text).ip;
+          if(!validIPv4(value))throw new Error('not IPv4');observedChecks[name]=true;reportedIp=value;
+        }}catch(_){{observedChecks[name]=false;}}
+      }}
+      if(expectedPhase==='baseline')await external('cloudflare','https://1.1.1.1/cdn-cgi/trace?n='+Date.now(),true);
+      else await Promise.all([external('ipify',{json.dumps(IPIFY_IPV4)}+'&n='+Date.now(),false),external('cloudflare','https://1.1.1.1/cdn-cgi/trace?n='+Date.now(),true)]);
+      report(observedChecks.ipify||observedChecks.cloudflare,expectedPhase,expectedGeneration,reportedIp,observedChecks);return;
+    }}
+    const response=await fetch({json.dumps(IPIFY_IPV4)}+"&n="+Date.now(),{{mode:"cors",cache:"no-store",signal:controller.signal}});
     if(!response.ok) throw new Error("probe failed"); const data=await response.json();
-    report(Boolean(data && validIPv4(data.ip)),expectedPhase,expectedGeneration);
+    report(Boolean(data && validIPv4(data.ip)),expectedPhase,expectedGeneration,data&&data.ip);
   }} catch (_) {{ report(false,expectedPhase,expectedGeneration); }}
 }}
 async function poll() {{ try {{ const s=await (await fetch(stateUrl,{{cache:"no-store"}})).json();

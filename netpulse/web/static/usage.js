@@ -1,0 +1,129 @@
+/* Observed ER605 counter deltas. Polling this endpoint never logs into the router. */
+let usageData=null,usageBusy=false,usageAgain=false;
+const usageSelections={};
+const usageGB=value=>`${(Number(value)/1e9).toFixed(2)} GB`;
+
+function renderUsageSummary(d,fresh){
+  const wans=d.wans||[],complete=fresh && wans.length>0 && wans.every(w=>w.available && Number.isFinite(w.down_mbps) && Number.isFinite(w.up_mbps));
+  for(const [id,key] of [['download','down_mbps'],['upload','up_mbps']]){
+    $('total-'+id).innerHTML=complete?`${fmt(wans.reduce((sum,w)=>sum+w[key],0),2)} <small>Mbps</small>`:'—';
+    $('total-'+id+'-note').textContent=complete?'Combined current traffic · '+wans.length+' WANs':'Waiting for fresh counters on every WAN';
+  }
+  const observed=wans.filter(w=>w.daily?.observed_seconds>0);
+  $('total-data').textContent=observed.length?usageGB(observed.reduce((sum,w)=>sum+(w.daily.down_bytes||0)+(w.daily.up_bytes||0),0)):'—';
+  $('total-data-note').textContent=observed.length?`${d.day} · ${observed.length===wans.length?'observed download + upload':'partial WAN coverage'}`:'No accepted observations on selected date';
+}
+
+async function refreshUsage(){
+  if(usageBusy){usageAgain=true;return;}
+  usageBusy=true;
+  try{
+    const day=$("usage-day").value,query=new URLSearchParams({hours:$("usage-window").value,ranking:$("usage-ranking").value});
+    if(day)query.set("day",day);
+    const response=await getJSON(`/api/usage?${query}`);
+    if(usageAgain)return;
+    usageData=response;
+    if(usageData.today){$("usage-day").max=usageData.today;$("device-usage-day").max=usageData.today;}
+    if(!day && usageData.day)$("usage-day").value=usageData.day;
+    $("device-usage-day").value=$("usage-day").value;
+    renderUsage();
+  }catch(error){
+    if(!usageData)usageData={enabled:true,available:false,wans:[],devices:[],dpi:{known:false,fresh:false},interval_seconds:30,device_interval_seconds:60,timezone:'unavailable'};
+    usageData.available=false;
+    if(usageData.dpi){usageData.dpi.capture_active=false;usageData.dpi.fresh=false;}
+    usageData.reason="Router usage feed unavailable";
+    usageData.devices=(usageData.devices||[]).map(row=>({...row,available:false}));renderUsage();
+    $("usage-status").textContent="Router usage feed unavailable · retained history may be incomplete";
+  }
+  finally{usageBusy=false;if(usageAgain){usageAgain=false;refreshUsage();}}
+}
+
+function renderUsage(){
+  const d=usageData;if(!d)return;
+  $("usage-limitation").textContent=d.limitation || d.reason || "Router-reported observations; completeness is unverified";
+  if(!d.enabled){renderUsageSummary({wans:[]},false);$("usage-dpi-state").textContent="Collection off";$("usage-dpi-state").className="state UNKNOWN";$("usage-wans").innerHTML="";$("usage-devices").innerHTML="";$('usage-device-table').hidden=true;$('usage-device-note').hidden=true;$('usage-empty').hidden=false;$('usage-empty').textContent='Usage collection is disabled.';$("usage-status").textContent=d.reason || "Router usage collection is disabled";return;}
+  const now=feedNow(d),age=d.sampled_at==null?null:now-d.sampled_at;
+  const fresh=d.available && age!=null && age>=0 && age<=d.interval_seconds*2.5;
+  renderUsageSummary(d,fresh);
+  $("usage-status").textContent=`${fresh ? "Counter sample "+Math.floor(age)+"s ago" : d.reason || "Waiting for valid counter deltas"} · WAN polls ${d.interval_seconds}s · device polls ${d.device_interval_seconds}s · daily calendar: ${d.timezone}`;
+  const focused=document.activeElement?.id;
+  const opened=Array.from($("usage-wans").querySelectorAll('details')).map(detail=>detail.open);
+  const counter=$("usage-source").value==="counter",bucket=counter?d.counter_bucket||d.bucket:d.bucket;
+  const graphPoints=counter?d.counter_points||[]:d.points||[];
+  const sharedValues=graphPoints.flatMap(p=>[p.down_mbps,p.up_mbps]).filter(Number.isFinite);
+  const ymax=Math.max(1,...sharedValues)*1.15;
+  const hours=Number($("usage-window").value),t0=now-hours*3600;
+  $("usage-wans").innerHTML=(d.wans||[]).map((w,index)=>{
+    const total=w.daily||{},observed=total.observed_seconds>0,available=fresh && w.available;
+    return `<article class="card live-panel" style="--c:${colorOf(w.wan)}"><header><h3>${esc(labelOf(w.wan))}</h3><span class="soft">Router-reported</span></header>
+      <div class="usage-metrics"><div><small>↓ Download · router rate</small><strong>${available?fmt(w.down_mbps,2):"—"}</strong> <span>Mbps</span></div><div><small>↑ Upload · router rate</small><strong>${available?fmt(w.up_mbps,2):"—"}</strong> <span>Mbps</span></div></div>
+      <svg class="live-plot" id="usage-svg-${index}" role="img" aria-label="${esc(labelOf(w.wan))} router-reported upload and download in Mbps"></svg>
+      <div class="sample-readout" id="usage-readout-${index}" aria-live="polite"></div>
+      <p class="live-note chart-key"><span>━━ Download</span> <span>┄┄ Upload</span> · ${counter?'Byte-counter average':'Router rate · ~30s average'}</p>
+      <details class="graph-inspector"><summary>Inspect samples &amp; source</summary>
+      <label class="sample-explorer">Explore intervals<input type="range" id="usage-slider-${index}" min="0" max="0" value="0" aria-label="Explore ${esc(labelOf(w.wan))} bandwidth intervals"></label>
+      <p class="live-note">${available?`${fmt(w.native_down_kBps,0)} / ${fmt(w.native_up_kBps,0)} kB/s · 1 kB/s = 0.008 Mbps`:"No fresh built-in rate"} · ${esc(w.reason||"")}</p>
+      <p class="live-note">${fresh && w.counter_average?.available?`Counter average ↓ ${fmt(w.counter_average.down_mbps,2)} / ↑ ${fmt(w.counter_average.up_mbps,2)} Mbps over ${fmt(w.counter_average.sample_seconds,1)}s`:"Byte-counter average awaiting a valid interval"} · ${bucket}s graph buckets</p></details>
+      <div class="usage-total"><div class="daily-split"><div><span class="daily-label">Downloaded · ${esc(d.day)}</span><strong>${observed?usageGB(total.down_bytes):"—"}</strong></div><div><span class="daily-label">Uploaded</span><strong>${observed?usageGB(total.up_bytes):"—"}</strong></div></div>
+      <p class="live-note">Collection coverage ${fmt(total.coverage_pct,1)}% · ${fmt(total.observed_seconds/60,1)} observed minutes</p>
+      ${total.estimated_boundary?'<p class="live-note">Intervals crossing midnight are apportioned by time.</p>':""}
+      ${!available?`<p class="live-note">${esc(w.reason||d.reason||"No fresh throughput measurement")}</p>`:""}</div></article>`;
+  }).join("");
+  (d.wans||[]).forEach((w,index)=>{
+    const svg=$("usage-svg-"+index),W=svg.clientWidth||500,H=190,L=42,R=12,T=12,B=26;
+    svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+    const x=t=>L+(W-L-R)*(t-t0)/(now-t0),y=v=>H-B-(H-B-T)*v/ymax;
+    const points=graphPoints.filter(p=>p.wan===w.wan && p.ts>=t0 && p.ts<=now);
+    let markup=`<defs><linearGradient id="usage-fill-${index}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${colorOf(w.wan)}" stop-opacity=".17"/><stop offset="100%" stop-color="${colorOf(w.wan)}" stop-opacity=".01"/></linearGradient></defs>`+[0,.5,1].map(f=>`<line x1="${L}" x2="${W-R}" y1="${y(ymax*f)}" y2="${y(ymax*f)}" stroke="${css("--line")}"/><text x="${L-6}" y="${y(ymax*f)+4}" text-anchor="end" font-size="11" fill="${css("--soft")}">${fmt(ymax*f,1)}</text>`).join("");
+    for(const key of ["down_mbps","up_mbps"]){
+      let path="",prev=null,segment="",first=null,last=null,areas="";
+      const closeArea=()=>{if(segment)areas+=segment+`L${x(last.ts)},${H-B}L${x(first.ts)},${H-B}Z`;segment="";};
+      for(const p of points){if(p[key]==null){closeArea();prev=null;continue;}const gap=!prev || p.ts-prev.ts>bucket*2.5;if(gap){closeArea();first=p;}const command=gap?`M${x(p.ts).toFixed(1)},${y(p[key]).toFixed(1)}`:counter?`L${x(p.ts).toFixed(1)},${y(p[key]).toFixed(1)}`:`H${x(p.ts).toFixed(1)}V${y(p[key]).toFixed(1)}`;path+=command;segment+=command;prev=p;last=p;}
+      closeArea();
+      if(key==='down_mbps')markup+=`<path d="${areas}" fill="url(#usage-fill-${index})" stroke="none"/>`;
+      markup+=`<path d="${path}" fill="none" stroke="${colorOf(w.wan)}" stroke-width="2" ${key==="up_mbps"?'stroke-dasharray="6 4"':""}/>`;
+      if(points.length<=120)markup+=points.filter(p=>p[key]!=null).map(p=>`<circle cx="${x(p.ts)}" cy="${y(p[key])}" r="1.6" fill="${colorOf(w.wan)}"/>`).join("");
+    }
+    if(!points.length)markup+=`<text x="${W/2}" y="${H/2}" text-anchor="middle" font-size="12" fill="${css("--soft")}">No observed counter intervals yet</text>`;
+    markup+=`<text x="${L}" y="${H-4}" font-size="11" fill="${css("--soft")}">${clock(t0)}</text><text x="${W-R}" y="${H-4}" text-anchor="end" font-size="11" fill="${css("--soft")}">${clock(now)}</text>`;
+    svg.innerHTML=markup;
+    const slider=$("usage-slider-"+index),readout=$("usage-readout-"+index);
+    slider.max=Math.max(0,points.length-1);slider.disabled=!points.length;
+    let selected=points.findIndex(p=>p.ts===usageSelections[w.wan]);if(selected<0)selected=points.length-1;
+    slider.value=Math.max(0,selected);
+    const show=p=>{readout.textContent=p?`${clock(p.ts)} · ↓ ${fmt(p.down_mbps,2)} / ↑ ${fmt(p.up_mbps,2)} Mbps · ${counter?fmt(p.seconds)+"s observed in bucket":(p.samples||1)+" router rate sample(s) in bucket"}`:"No measurement at this time";};
+    show(points[selected]);
+    slider.oninput=()=>{const p=points[Number(slider.value)];if(p)usageSelections[w.wan]=p.ts;show(p);};
+    svg.onpointermove=event=>{const box=svg.getBoundingClientRect(),t=t0+((event.clientX-box.left)/box.width*W-L)/(W-L-R)*(now-t0);
+      const p=points.reduce((best,p)=>!best || Math.abs(p.ts-t)<Math.abs(best.ts-t)?p:best,null);show(p && Math.abs(p.ts-t)<=bucket*1.5?p:null);};
+    svg.onpointerleave=()=>show(points[Number(slider.value)]);
+  });
+  $("usage-wans").querySelectorAll('details').forEach((detail,index)=>{detail.open=!!opened[index];});
+  if(focused?.startsWith("usage-slider-") && $(focused))$(focused).focus({preventScroll:true});
+  const dpi=d.dpi||{},dpiState=$("usage-dpi-state");
+  const dpiAge=dpi.sampled_at==null?null:feedNow(d)-dpi.sampled_at;
+  const dpiFresh=dpi.fresh && dpiAge!=null && dpiAge>=0 && dpiAge<=(d.device_interval_seconds||60)*2;
+  const dpiActive=dpi.capture_active && dpiFresh;
+  dpiState.textContent=dpiActive?"DPI capture on":dpi.known && dpiFresh?"DPI capture off":"DPI unverified";
+  dpiState.className="state "+(dpiActive?"HEALTHY":dpi.known && dpiFresh?"DEGRADED":"UNKNOWN");
+  const weight=row=>d.ranking==="now"?(row.available && dpiActive?(row.rx_mbps||0)+(row.tx_mbps||0):0):(row.daily?.down_bytes||0)+(row.daily?.up_bytes||0);
+  const devices=(d.devices||[]).filter(row=>d.ranking==='now'?row.available && dpiActive:row.daily?.observed_seconds>0);
+  const max=Math.max(0,...devices.map(weight));
+  $("usage-device-note").textContent=(d.device_limitation || "DPI capture state is unknown; earlier unverified observations are excluded.")+" "+(d.device_reason || `Top ${devices.length} DHCP-identified devices by ${d.ranking==="now"?"current DPI-captured download + upload rate":"DPI-captured download + upload bytes on "+d.day}. Only accepted DPI intervals count; these are not household usage shares or per-WAN attribution.`);
+  $('usage-device-table').hidden=!devices.length;
+  $('usage-empty').hidden=!!devices.length;
+  $('usage-device-note').hidden=!devices.length;
+  if(!devices.length)$('usage-empty').innerHTML=`<svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect x="4" y="5" width="24" height="16" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M10 27h12M16 21v6M11 13h3l2-4 3 8 2-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><strong>${dpiActive?'Waiting for device observations':dpi.known && dpiFresh?'Device capture is off':'Device capture is unverified'}</strong><p>${dpiActive?'A complete capture interval is needed before devices can be ranked.': 'Current device rates are unavailable. Detailed capture can affect router throughput; WAN totals continue independently.'}</p><p>Earlier unverified counters are excluded. ${dpiActive?'':'Previously captured history remains available on its recorded date.'}</p>`;
+  $("usage-devices").innerHTML=devices.map((row,index)=>`<tr><td>${index+1}. ${esc(row.label)}<small>${esc(row.mac)}</small><div class="usage-bar" style="width:${max?Math.max(0,Math.min(100,100*weight(row)/max)):0}%"></div></td>
+    <td>${row.available && dpiActive?fmt(row.rx_mbps,2)+" / "+fmt(row.tx_mbps,2):"Unavailable"}<small>Mbps · ↓ download / ↑ upload</small></td>
+    <td>${row.daily?.observed_seconds>0?usageGB(row.daily.down_bytes+row.daily.up_bytes):"No DPI observations"}<small>${fmt((row.daily?.observed_seconds||0)/60,1)} DPI min</small></td></tr>`).join("") || '<tr><td colspan="3">No identified device observations are available yet.</td></tr>';
+}
+
+document.addEventListener("DOMContentLoaded",()=>{
+  for(const id of ["usage-day","usage-window","usage-ranking"])$(id).onchange=refreshUsage;
+  $('device-usage-day').onchange=()=>{$('usage-day').value=$('device-usage-day').value;refreshUsage();};
+  $("usage-source").onchange=renderUsage;
+  refreshUsage();setInterval(()=>{if(!document.hidden)refreshUsage();},15000);
+  document.addEventListener("visibilitychange",()=>{if(!document.hidden)refreshUsage();});
+  window.addEventListener("resize",()=>{clearTimeout(window.wanUsageResize);window.wanUsageResize=setTimeout(renderUsage,150);});
+});

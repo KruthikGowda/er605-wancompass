@@ -26,6 +26,18 @@ Telegram is optional. WANCompass works without it. Keep `[telegram].enabled = fa
 
 The setup helper removes any webhook and consumes earlier pending updates to establish a clean polling offset. This is appropriate for a newly created bot. Do not use a bot already connected to another application: setup can remove that webhook and consume its updates.
 
+## Button controls
+
+Open the private bot chat and tap **Start** (or **Main menu**). The persistent keyboard and inline panel provide status, saved speed results, device/group controls, reports, and alert settings. Existing slash commands continue to work. `/menu` reopens the panel if Telegram hides the keyboard.
+
+For a connectivity change: **Devices** or **Groups** → tap targets → **Choose action** → choose the action → review → **Confirm**. Pause also asks for a duration. Cancel and navigation invalidate the previous selection/review. No device address or confirmation token needs to be typed. Create/Rename group offers unused preset name buttons; typing a custom name is optional. Main menu and other keyboard navigation also work while choosing a name.
+
+**Internet controls** shows current unavailable-action reasons and **Saved pauses** lists saved pause intents. Disabled controls cannot be applied through callbacks. Pause/resume and strict **Only WAN** currently require the explicitly validated ER605 2.3.3 firmware; installing newer firmware does not extend that validation. **Prefer WAN** is distinct from strict Only mode. Button-flow tests with simulated writes establish UI behavior, not enforcement or failover on a real device.
+
+**Speed results** reads saved measurements, labels wired-PC Cloudflare, wired-PC Ookla, and Pi Cloudflare separately, and includes the measurement time. It starts no test. **Reports & diagnostics → Run Pi test…** requires a two-minute, single-use confirmation and retains data budgets/cooldowns. It runs on the Pi; it cannot establish full ISP line capacity or start a wired-PC test.
+
+Set optional `[telegram].dashboard_url` to the dashboard's existing LAN/VPN HTTP(S) address to add **Open dashboard** to panels. Do not embed credentials, tokens, queries, or fragments. The link does not expose the service publicly or bypass its login; access from outside the home still needs the existing VPN/network path. Members receive read-only menu choices; owner control callbacks require the owner's own private chat.
+
 ## Settings and privacy
 
 - Keep `/etc/netpulse/config.toml` root-owned and readable only by the service group (normally mode `0640`).
@@ -44,6 +56,14 @@ The `--add` flow adds another private account to an existing installation. Use i
 ```sh
 sudo python3 tools/telegram_setup.py --add
 ```
+
+## Internet incidents and delivery
+
+Independent source-bound web checks run against Cloudflare and Google. Internet failures require two consecutive checks; partial reachability needs three. Recovery needs two successful checks. The incident state survives service restarts. Ping alerts explicitly describe missing ping replies; those alone do not establish an Internet outage. Confirmed Internet failures and recovery bypass quiet hours; partial reachability respects quiet hours and mute.
+
+Alerts use a bounded SQLite-backed queue through the existing private database. Pending messages survive restarts, retry with backoff, and respect Telegram's rate-limit delay. A newer alert for the same incident key replaces an older pending message, so recovery can supersede an undelivered outage. Retries retain only recipients that have not accepted the message and remove recipients who are no longer authorized. Pending messages expire after 24 hours; the queue holds at most 100 incident keys. Device-activity notices and interactive replies retain their existing ordinary queue.
+
+If both Internet connections fail, Telegram cannot deliver until outbound connectivity returns. The dashboard shows pending alerts and queue storage failures. Telegram API acceptance does not prove receipt or reading; an ambiguous timeout after acceptance can produce a duplicate on retry. Delivery is best effort with durable retries, not exactly once.
 
 ## Troubleshooting
 

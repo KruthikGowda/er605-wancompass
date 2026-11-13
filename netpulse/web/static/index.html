@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#127A7E">
 <title>WANCompass</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%2314776a%27/%3E%3Cpath d=%27M4 17h5l3-7 5 14 4-10 3 3h4%27 fill=%27none%27 stroke=%27white%27 stroke-width=%272%27/%3E%3C/svg%3E">
 <style>
   /* Fonts: local system faces only. This page must work when the internet is down. */
   :root {
@@ -278,6 +279,7 @@
     .monitor { transition: none; }
   }
 </style>
+<link rel="stylesheet" href="/static/dashboard.css?v=20261113b">
 </head>
 <body>
 <main>
@@ -286,9 +288,12 @@
     <p class="site-subtitle">A clear view of your home internet and local network</p>
     <p class="site-summary" id="dashboard-summary" aria-live="polite"></p>
   </header>
+  <a href="#monitor" class="skip-link">Skip to dashboard</a>
   <nav class="section-nav" aria-label="Dashboard sections">
-    <a href="#monitor">Overview</a><a href="#devices-heading">Devices</a><a href="#history-heading">History</a><a href="#system-heading">System</a>
+    <a href="#monitor" aria-current="page">Overview</a><a href="#devices-heading">Devices</a><a href="#history-heading">History</a><a href="#system-heading">System</a>
   </nav>
+  <div class="workspace-bar"><div><p class="workspace-eyebrow">HOME NETWORK</p><p class="workspace-title" id="workspace-title">Network overview</p></div><label class="theme-control">Appearance<select id="dashboard-theme" aria-label="Dashboard appearance"><option value="auto">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></div>
+<div class="dashboard-page" data-dashboard-page="overview">
   <section class="monitor" id="monitor" data-level="UNKNOWN" aria-live="polite">
     <div class="topline">
       <div class="brand">
@@ -299,19 +304,55 @@
     </div>
     <h1 class="verdict" id="verdict">Starting up</h1>
     <p class="because" id="because">Checking both connections…</p>
+    <div class="ops-summary" id="ops-summary"></div>
     <div class="traces" id="traces"></div>
     <div id="muted"></div>
-    <p class="monitor-policy" id="alert-policy-summary">Checking alert delivery settings…</p>
-    <details class="monitor-details"><summary>Alert settings and delivery</summary><p id="alert-policy" style="margin:0"></p></details>
+    <details class="monitor-details"><summary>Alert settings and delivery</summary><p id="alert-policy" style="margin:0"></p>    <p class="monitor-policy" id="alert-policy-summary">Checking alert delivery settings…</p></details>
   </section>
 
+<section class="speed-overview" aria-label="Internet speed test results">
+  <h2>Internet speed · last test <button class="run" id="run-speed">Run Pi speed test</button></h2>
+  <div class="isps" id="speeds"></div>
+  <p class="soft" style="font-size:13px;margin:8px 2px 0" id="speed-note">Results can be limited by the monitoring device’s capacity; trends and dips are most useful.</p>
+<p class="telemetry-note">Each result names its test device. Wired PC tests avoid the Pi's Ethernet limit. The manual button runs from the Pi and can be limited by its Ethernet port and power. Live traffic below shows usage, not speed-test capacity.</p>
+</section>
+  <div class="traffic-summary" aria-label="Combined WAN traffic">
+    <article class="summary-tile"><span class="tile-label">Live download usage</span><strong id="total-download" class="num">—</strong><span class="tile-foot" id="total-download-note">Waiting for both WAN counters</span></article>
+    <article class="summary-tile"><span class="tile-label">Live upload usage</span><strong id="total-upload" class="num">—</strong><span class="tile-foot" id="total-upload-note">Waiting for both WAN counters</span></article>
+    <article class="summary-tile"><span class="tile-label">Data on selected date</span><strong id="total-data" class="num">—</strong><span class="tile-foot" id="total-data-note">Observed download + upload</span></article>
+  </div>
+  <section aria-label="Router-reported bandwidth usage" class="usage-section" id="bandwidth-heading">
+    <div class="live-toolbar"><h2>Traffic &amp; data usage</h2><div class="live-tools">
+      <label>Usage date <input type="date" id="usage-day"></label>
+      <label>Source <select id="usage-source"><option value="native">Built-in router rate</option><option value="counter">Byte-counter average</option></select></label>
+      <label>Window <select id="usage-window"><option value="0.25">15 minutes</option><option value="1" selected>1 hour</option><option value="24">24 hours</option></select></label>
+    </div></div>
+    <details class="measurement-help"><summary>About these measurements</summary><p id="usage-limitation">Loading router counter capabilities…</p></details>
+    <div class="live-grid" id="usage-wans"></div>
+    <p class="telemetry-note" id="usage-status" role="status">Waiting for router counters…</p>
+  </section>
   <h2 class="section-heading">Your connections</h2>
   <div class="isps" id="isps"></div>
 
-  <div id="router-wrap" hidden>
-    <h2 class="section-heading">Router</h2>
-    <div class="card router" id="router"></div>
-  </div>
+  <section aria-label="Live WAN measurements">
+    <div class="live-toolbar"><h2>Connection quality</h2><div class="live-tools">
+      <label>Measure <select id="live-metric"><option value="rtt_ms">Latency · ms</option><option value="loss_pct">Packet loss · %</option><option value="jitter_ms">Jitter · ms</option></select></label>
+      <label>Window <select id="live-window"><option value="15">15 minutes</option><option value="60">1 hour</option></select></label>
+    </div></div>
+    <div class="live-grid" id="live-plots"></div>
+    <p class="telemetry-note" id="live-status">Waiting for measurements…</p>
+    <p class="telemetry-note">These graphs show probe quality, not download speed or household bandwidth. Samples refresh every 10 seconds; missing measurements remain gaps.</p>
+  </section>
+
+</div>
+<div class="dashboard-page" data-dashboard-page="devices">
+    <div class="live-toolbar"><h2>Device usage <span class="state" id="usage-dpi-state">Checking DPI</span></h2><div class="live-tools">
+      <label>Usage date <input type="date" id="device-usage-day"></label>
+      <label>Rank by <select id="usage-ranking"><option value="today">DPI-captured data on selected date</option><option value="now">Current DPI-captured rate</option></select></label>
+    </div></div>
+    <div class="card"><p class="telemetry-note" id="usage-device-note"></p>
+      <div class="usage-empty" id="usage-empty" hidden></div><table class="usage-devices" id="usage-device-table"><thead><tr><th>Device</th><th>Download / upload</th><th>DPI-captured data</th></tr></thead><tbody id="usage-devices"></tbody></table>
+    </div>
 
   <div id="devices-wrap" hidden>
     <h2 class="section-heading" id="devices-heading">Home devices</h2>
@@ -428,16 +469,23 @@
     <div class="dialog-actions"><button type="button" id="reservation-cancel">Cancel</button><button type="button" class="primary" id="reservation-apply">Create reservation</button></div>
   </dialog>
 
-  <h2 class="section-heading" id="system-heading">System</h2>
+</div>
+<div class="dashboard-page" data-dashboard-page="system">
+  <h2 class="section-heading" id="system-heading">System &amp; diagnostics</h2>
+  <div id="router-wrap" hidden>
+    <h2 class="section-heading">Router</h2>
+    <div class="card router" id="router"></div>
+  </div>
+
   <div id="pi-wrap" hidden>
     <h2 class="section-heading">Pi health</h2>
     <div class="card"><p id="pi-disk" style="margin:0"></p><p id="pi-power" class="soft" style="margin:6px 0 0"></p><p id="pi-performance" class="soft" style="margin:6px 0 0"></p><p id="pi-capacity" class="soft" style="margin:6px 0 0"></p><p id="pi-backup" class="soft" style="margin:6px 0 0"></p><p id="pi-acl-recovery" class="soft" style="margin:6px 0 0"></p></div>
   </div>
 
-  <h2>Speed <button class="run" id="run-speed">Run speed test</button></h2>
-  <div class="isps" id="speeds"></div>
-  <p class="soft" style="font-size:13px;margin:8px 2px 0" id="speed-note">Results can be limited by the monitoring device’s capacity; trends and dips are most useful.</p>
 
+
+</div>
+<div class="dashboard-page" data-dashboard-page="history">
   <h2 class="section-heading" id="history-heading">History</h2>
   <div class="card">
     <div class="controls">
@@ -474,6 +522,7 @@
     <ul class="events" id="decision-review" aria-live="polite"><li><span>🔀</span><span class="soft">Loading review…</span><span></span></li></ul>
   </div>
 
+</div>
   <footer>
     <p>📄 <a href="/report?days=30">ISP report (last 30 days)</a>: a printable summary of outages, bad hours and
       speed tests to share with your Internet provider. <a href="/api/report.csv?days=30">Download as CSV</a></p>
@@ -488,6 +537,8 @@
   </footer>
 </main>
 
+<script src="/static/live.js?v=20261113b"></script>
+<script src="/static/usage.js?v=20261113b"></script>
 <script>
 const $ = id => document.getElementById(id);
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -532,7 +583,20 @@ function speedWord(w) {
   return w.rtt_ms < 30 ? "Fast" : w.rtt_ms < 80 ? "Good" : w.rtt_ms < 150 ? "Slow" : "Very slow";
 }
 
-async function getJSON(url) { const r = await fetch(url, {cache: "no-store"}); if (!r.ok) throw new Error(r.status); return r.json(); }
+function feedNow(data) {
+  const reference=data?._feedClock;
+  return reference?reference.serverSeconds+Math.max(0,performance.now()-reference.receivedMs)/1000:Date.now()/1000;
+}
+async function getJSON(url) {
+  const r=await fetch(url,{cache:"no-store"});if(!r.ok)throw new Error(r.status);
+  const receivedMs=performance.now(),serverDate=Date.parse(r.headers.get('Date'));
+  const data=await r.json();
+  // HTTP Date has whole-second precision. Round its upper bound forward to avoid
+  // classifying a subsecond sample as future; all measurements use the Pi clock.
+  if(data && typeof data==='object' && Number.isFinite(serverDate))
+    Object.defineProperty(data,'_feedClock',{value:{serverSeconds:serverDate/1000+1,receivedMs}});
+  return data;
+}
 
 let deviceData = null;
 let pauseData = {state:{enabled:false,reason:"Awaiting Internet pause validation"},records:[]};
@@ -1585,6 +1649,7 @@ async function refreshStatus() {
   try { s = await getJSON("/api/status"); } catch (e) {
     $("updated").textContent = "Connection lost · showing last known status";
     $("updated").classList.add("stale");
+    if (lastStatus && typeof renderNetworkOverview === "function") renderNetworkOverview({...lastStatus,updated:0});
     return;
   }
   $("updated").classList.remove("stale");
@@ -1624,6 +1689,7 @@ async function refreshStatus() {
     : "";
   $("alert-policy").textContent = `${alertPolicyText} Suppressed since service start: ${Number(suppressed.mute) || 0} muted · ${Number(suppressed.quiet_hours) || 0} in quiet hours · ${Number(suppressed.rate_limited) || 0} rate-limited. Resets when NetPulse restarts.${deliveryText}${deviceDeliveryText}`;
   renderISPs(s);
+  if (typeof renderNetworkOverview === "function") renderNetworkOverview(s);
   renderRouter(s.router, s.wans);
   drawTraces();
   $("mode-note").textContent = s.mode === "dry-run"
@@ -1636,7 +1702,8 @@ function renderISPs(s) {
   $("isps").innerHTML = s.wans.map(w => {
     const stateAge = w.state_since == null ? null : now - Number(w.state_since);
     const since = stateAge != null && Number.isFinite(stateAge) && stateAge >= 0 && w.state !== "UNKNOWN"
-      ? `${STATE_WORD[w.state]} for ${duration(stateAge)}` : "Collecting data";
+      ? `${STATE_WORD[w.state]} for ${duration(stateAge)}`
+      : w.errors && w.errors.length ? "The Pi cannot send measurements" : "Collecting data";
     const reasons = w.why || w.reasons || [];
     const why = reasons.length && w.state !== "HEALTHY" && w.state !== "UNKNOWN"
       ? `<li>Why: ${esc(reasons.join("; "))}</li>` : "";
@@ -1655,7 +1722,7 @@ function renderISPs(s) {
       </div>
       <div class="big"><b>${fmt(w.rtt_ms)}</b><span>ms · ${esc(speedWord(w))}</span></div>
       <ul class="facts">
-        <li>${esc(lossWords(w.loss_pct))}</li>
+        <li>${esc(w.state === "UNKNOWN" ? "Measurement unavailable" : lossWords(w.loss_pct))}</li>
         ${w.jitter_ms != null ? `<li>${esc(jitterWords(w.jitter_ms))} (${fmt(w.jitter_ms, 1)} ms variation)</li>` : ""}
         <li class="soft">${esc(since)}</li>
         ${why}${errors}${connectivity}
@@ -1787,25 +1854,33 @@ async function refreshHistory() {
   try { h = await getJSON(`/api/history?hours=${hours}&target=${encodeURIComponent(server)}`); } catch (e) { return; }
   const names = order.length ? order : [...new Set(h.points.map(p => p.wan))];
   $("legend").innerHTML = names.map(n => `<span><i style="background:${colorOf(n)}"></i>${esc(labelOf(n))}</span>`).join("");
-  drawChart(names.map(wan => ({wan, points: h.points.filter(p => p.wan === wan)})), h.bucket);
+  const until = Date.now() / 1000;
+  drawChart(names.map(wan => ({wan, points: h.points.filter(p => p.wan === wan)})), h.bucket,
+    {since: until - h.hours * 3600, until});
   $("chart-note").textContent = metric === "rtt_ms" ? "Lower is better" : "Lower is better · 0% is perfect";
   $("totals").innerHTML = names.map(wan => {
     const m = h.state_minutes[wan] || {}, total = Object.values(m).reduce((a, b) => a + b, 0);
-    if (!total) return "";
-    const pct = n => (100 * n / total).toFixed(1) + "%";
+    const known = total - (m.UNKNOWN || 0);
+    const pct = n => known ? (100 * n / known).toFixed(1) + "%" : "unavailable";
+    const coverage = Math.min(100, 100 * total / (h.hours * 60)).toFixed(1);
     const bits = [["DEGRADED", "slow"], ["BAD", "bad"], ["OFFLINE", "down"]].filter(([k]) => m[k]).map(([k, w]) => `${w} ${duration(m[k] * 60)}`);
     return `<div class="total" style="--c:${colorOf(wan)}"><b>${esc(labelOf(wan))}</b>
-      Online ${pct(total - (m.OFFLINE || 0))} · healthy ${pct(m.HEALTHY || 0)}
-      <div class="soft">${bits.length ? bits.join(" · ") : "No problems in this period"}</div></div>`;
+      Observed online ${pct(known - (m.OFFLINE || 0))} · healthy ${pct(m.HEALTHY || 0)}
+      <div class="soft">Measurement coverage ${coverage}% · ${total} recorded minutes of ${h.hours * 60}</div>
+      <div class="soft">${bits.length ? bits.join(" · ") : known ? "No problems in the recorded measurements" : "No confirmed health measurements"}</div></div>`;
   }).join("");
 }
 
-function drawChart(series, bucket) {
+function drawChart(series, bucket, range) {
   const svg = $("chart"), W = svg.clientWidth || 800, H = 220, L = 38, R = 10, T = 10, B = 24, key = metric;
+  svg.onpointermove = null;
+  svg.onpointerleave = null;
+  $("tip").style.display = "none";
   const all = series.flatMap(s => s.points.filter(p => p[key] != null));
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   if (!all.length) { svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" fill="${css("--soft")}" font-size="14">No history yet: check back in a few minutes</text>`; return; }
-  const t0 = Math.min(...all.map(p => p.ts)), t1 = Math.max(Math.max(...all.map(p => p.ts)), t0 + 60);
+  const t0 = range ? range.since : Math.min(...all.map(p => p.ts));
+  const t1 = range ? range.until : Math.max(Math.max(...all.map(p => p.ts)), t0 + 60);
   let vmax = Math.max(...all.map(p => p[key]));
   vmax = key === "loss_pct" ? Math.max(5, Math.ceil(vmax / 5) * 5) : Math.max(20, Math.ceil(vmax / 20) * 20);
   const x = t => L + (W - L - R) * (t - t0) / (t1 - t0), y = v => T + (H - T - B) * (1 - v / vmax);
@@ -1831,7 +1906,9 @@ function drawChart(series, bucket) {
     const t = Math.round((t0 + (px - L) / (W - L - R) * (t1 - t0)) / bucket) * bucket;
     const rows = series.map(s => {
       let best = null; for (const p of s.points) if (!best || Math.abs(p.ts - t) < Math.abs(best.ts - t)) best = p;
-      return best && best[key] != null ? `${esc(labelOf(s.wan))}: ${fmt(best[key], key === "rtt_ms" ? 0 : 1)} ${unit}` : null;
+      return best && best[key] != null && Math.abs(best.ts - t) <= bucket * 1.5
+        ? `${esc(labelOf(s.wan))}: ${fmt(best[key], key === "rtt_ms" ? 0 : 1)} ${unit}`
+        : `${esc(labelOf(s.wan))}: no measurement`;
     }).filter(Boolean);
     cursor.setAttribute("x1", x(t)); cursor.setAttribute("x2", x(t)); cursor.setAttribute("visibility", "visible");
     tip.innerHTML = `${when(t)}<br>${rows.join("<br>")}`;
@@ -1945,7 +2022,7 @@ async function refreshSpeed() {
   const u = d.data_usage;
   const budgetReached = u && u.budget_enabled && u.used_mb + u.next_run_mb > u.budget_mb;
   btn.disabled = d.running || budgetReached;
-  btn.textContent = d.running ? "Testing… (about a minute)" : budgetReached ? "Monthly budget reached" : "Run speed test";
+  btn.textContent = d.running ? "Testing… (about a minute)" : budgetReached ? "Monthly budget reached" : "Run Pi speed test";
   if (d.data_usage) {
     const used = fmt(u.used_mb, 0), next = fmt(u.next_run_mb, 0);
     $("speed-note").textContent = u.budget_enabled
@@ -1957,12 +2034,15 @@ async function refreshSpeed() {
   const names = order.length ? order : [...new Set(d.results.map(r => r.wan))];
   $("speeds").innerHTML = names.map(wan => {
     const mine = d.results.filter(r => r.wan === wan);
-    const ok = mine.filter(r => !r.error && r.down_mbps != null);
-    const last = mine[mine.length - 1];
-    const usual = d.usual[wan];
+    const successes = mine.filter(r => !r.error && r.down_mbps != null);
+    const newest = mine[mine.length - 1];
+    const last = newest?.error ? successes[successes.length - 1] : newest;
+    const sourceOf = r => ["wired_pc", "wired_pc_ookla"].includes(r?.trigger) ? r.trigger : "pi";
+    const source = sourceOf(last), wired = source !== "pi", ookla = source === "wired_pc_ookla";
+    const ok = successes.filter(r => sourceOf(r) === source);
+    const usual = ookla ? d.ookla_usual?.[wan] : wired ? d.wired_usual?.[wan] : d.usual[wan];
     let body;
-    if (!last) body = `<p class="soft">No speed tests yet. Tap “Run speed test”.</p>`;
-    else if (last.error) body = `<p class="dip">Last test failed: ${esc(last.error)}</p>`;
+    if (!last) body = newest?.error ? `<p class="dip">Last test failed: ${esc(newest.error)}</p><p class="soft">No successful speed measurement is available. Run a new test.</p>` : `<p class="soft">No speed tests yet. Tap “Run speed test”.</p>`;
     else {
       const bloat = last.loaded_ms != null && last.idle_ms != null ? Math.max(0, last.loaded_ms - last.idle_ms) : null;
       const dip = usual && last.down_mbps < usual * 0.5;
@@ -1972,7 +2052,7 @@ async function refreshSpeed() {
         <ul class="facts">
           ${bloat != null ? `<li>${bloat < 20 ? "No extra lag when the line is busy" : `+${fmt(bloat)} ms lag when the line is busy`}</li>` : ""}
           ${usual ? `<li class="${dip ? "dip" : ""}">${dip ? `Much slower than usual (normally about ${fmt(usual)} Mbps)` : `Normally about ${fmt(usual)} Mbps`}</li>` : ""}
-          <li class="soft">Tested ${when(last.ts)}</li>
+          <li><b>${wired ? "Wired PC" : "Monitoring Pi"} · ${ookla ? "Ookla" : "Cloudflare"}</b> · ${deviceDate(last.ts)}</li>
         </ul>`;
     }
     // Sparkline of downloads over 30 days; dips in red.
@@ -1984,11 +2064,11 @@ async function refreshSpeed() {
       const dots = ok.map(r => `<circle cx="${x(r.ts).toFixed(1)}" cy="${y(r.down_mbps).toFixed(1)}" r="2.5" fill="${usual && r.down_mbps < usual * 0.5 ? css("--bad") : colorOf(wan)}"/>`).join("");
       spark = `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Download speed over the last 30 days">
         <path d="${path}" fill="none" stroke="${colorOf(wan)}" stroke-width="1.5" vector-effect="non-scaling-stroke" opacity=".6"/>${dots}</svg>
-        <div class="soft" style="font-size:12px">${ok.length} tests in 30 days · lowest ${fmt(Math.min(...ok.map(r => r.down_mbps)))} Mbps</div>`;
+        <div class="soft" style="font-size:12px">${ok.length} ${wired ? "wired PC" : "Pi"} ${ookla ? "Ookla" : "Cloudflare"} tests in 30 days · lowest ${fmt(Math.min(...ok.map(r => r.down_mbps)))} Mbps</div>`;
     }
     return `<article class="card isp" style="--c:${colorOf(wan)}">
-      <div class="isp-head"><div class="isp-name">${esc(labelOf(wan))}${d.plans[wan] ? `<span>${fmt(d.plans[wan])} Mbps plan</span>` : ""}</div></div>
-      ${body}${spark}</article>`;
+      <div class="isp-head"><div class="isp-name">${esc(labelOf(wan))}${d.plans[wan] ? `<span>Configured plan: ${fmt(d.plans[wan])} Mbps</span>` : ""}</div></div>
+      ${newest?.error && last ? `<p class="dip">Latest attempt failed: ${esc(newest.error)}. Showing the earlier successful measurement below.</p>` : ""}${body}${spark}</article>`;
   }).join("");
 }
 $("run-speed").onclick = async () => {
@@ -2014,8 +2094,8 @@ segment("range", "h", v => hours = Number(v));
 $("server").onchange = e => { server = e.target.value; refreshHistory(); };
 let resizeTimer; window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(refreshHistory, 150); });
 
-refreshStatus().then(() => { refreshDevices(); refreshPiHealth(); refreshTraces(); refreshHistory(); refreshEvents(); refreshDecisionReview(); refreshSpeed(); });
-setInterval(refreshStatus, 10000);
+refreshStatus().then(() => { refreshDevices(); refreshPiHealth(); refreshTraces(); refreshHistory(); refreshEvents(); refreshDecisionReview(); refreshSpeed(); refreshLive(); });
+setInterval(() => { if (!document.hidden) { refreshStatus(); refreshLive(); } }, 10000);
 setInterval(() => { refreshDevices(); refreshPiHealth(); refreshTraces(); refreshHistory(); refreshEvents(); refreshDecisionReview(); refreshSpeed(); }, 60000);
 </script>
 </body>
