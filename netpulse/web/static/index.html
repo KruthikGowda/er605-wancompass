@@ -310,9 +310,15 @@
     <details class="monitor-details"><summary>Alert settings and delivery</summary><p id="alert-policy" style="margin:0"></p>    <p class="monitor-policy" id="alert-policy-summary">Checking alert delivery settings…</p></details>
   </section>
 
+<section class="speed-overview" aria-label="Internet speed test results">
+  <h2>Internet speed · last test <button class="run" id="run-speed">Run speed test</button></h2>
+  <div class="isps" id="speeds"></div>
+  <p class="soft" style="font-size:13px;margin:8px 2px 0" id="speed-note">Results can be limited by the monitoring device’s capacity; trends and dips are most useful.</p>
+<p class="telemetry-note">Speed tests estimate connection capacity. Live traffic below shows current usage. Tests run from the monitoring Pi and can be limited by its Ethernet port and power.</p>
+</section>
   <div class="traffic-summary" aria-label="Combined WAN traffic">
-    <article class="summary-tile"><span class="tile-label">Download now</span><strong id="total-download" class="num">—</strong><span class="tile-foot" id="total-download-note">Waiting for both WAN counters</span></article>
-    <article class="summary-tile"><span class="tile-label">Upload now</span><strong id="total-upload" class="num">—</strong><span class="tile-foot" id="total-upload-note">Waiting for both WAN counters</span></article>
+    <article class="summary-tile"><span class="tile-label">Live download usage</span><strong id="total-download" class="num">—</strong><span class="tile-foot" id="total-download-note">Waiting for both WAN counters</span></article>
+    <article class="summary-tile"><span class="tile-label">Live upload usage</span><strong id="total-upload" class="num">—</strong><span class="tile-foot" id="total-upload-note">Waiting for both WAN counters</span></article>
     <article class="summary-tile"><span class="tile-label">Data on selected date</span><strong id="total-data" class="num">—</strong><span class="tile-foot" id="total-data-note">Observed download + upload</span></article>
   </div>
   <section aria-label="Router-reported bandwidth usage" class="usage-section" id="bandwidth-heading">
@@ -476,9 +482,7 @@
     <div class="card"><p id="pi-disk" style="margin:0"></p><p id="pi-power" class="soft" style="margin:6px 0 0"></p><p id="pi-performance" class="soft" style="margin:6px 0 0"></p><p id="pi-capacity" class="soft" style="margin:6px 0 0"></p><p id="pi-backup" class="soft" style="margin:6px 0 0"></p><p id="pi-acl-recovery" class="soft" style="margin:6px 0 0"></p></div>
   </div>
 
-  <h2>Speed <button class="run" id="run-speed">Run speed test</button></h2>
-  <div class="isps" id="speeds"></div>
-  <p class="soft" style="font-size:13px;margin:8px 2px 0" id="speed-note">Results can be limited by the monitoring device’s capacity; trends and dips are most useful.</p>
+
 
 </div>
 <div class="dashboard-page" data-dashboard-page="history">
@@ -2031,11 +2035,11 @@ async function refreshSpeed() {
   $("speeds").innerHTML = names.map(wan => {
     const mine = d.results.filter(r => r.wan === wan);
     const ok = mine.filter(r => !r.error && r.down_mbps != null);
-    const last = mine[mine.length - 1];
+    const newest = mine[mine.length - 1];
+    const last = newest?.error ? ok[ok.length - 1] : newest;
     const usual = d.usual[wan];
     let body;
-    if (!last) body = `<p class="soft">No speed tests yet. Tap “Run speed test”.</p>`;
-    else if (last.error) body = `<p class="dip">Last test failed: ${esc(last.error)}</p>`;
+    if (!last) body = newest?.error ? `<p class="dip">Last test failed: ${esc(newest.error)}</p><p class="soft">No successful speed measurement is available. Run a new test.</p>` : `<p class="soft">No speed tests yet. Tap “Run speed test”.</p>`;
     else {
       const bloat = last.loaded_ms != null && last.idle_ms != null ? Math.max(0, last.loaded_ms - last.idle_ms) : null;
       const dip = usual && last.down_mbps < usual * 0.5;
@@ -2045,7 +2049,7 @@ async function refreshSpeed() {
         <ul class="facts">
           ${bloat != null ? `<li>${bloat < 20 ? "No extra lag when the line is busy" : `+${fmt(bloat)} ms lag when the line is busy`}</li>` : ""}
           ${usual ? `<li class="${dip ? "dip" : ""}">${dip ? `Much slower than usual (normally about ${fmt(usual)} Mbps)` : `Normally about ${fmt(usual)} Mbps`}</li>` : ""}
-          <li class="soft">Tested ${when(last.ts)}</li>
+          <li class="soft">Last successful test · ${deviceDate(last.ts)}</li>
         </ul>`;
     }
     // Sparkline of downloads over 30 days; dips in red.
@@ -2060,8 +2064,8 @@ async function refreshSpeed() {
         <div class="soft" style="font-size:12px">${ok.length} tests in 30 days · lowest ${fmt(Math.min(...ok.map(r => r.down_mbps)))} Mbps</div>`;
     }
     return `<article class="card isp" style="--c:${colorOf(wan)}">
-      <div class="isp-head"><div class="isp-name">${esc(labelOf(wan))}${d.plans[wan] ? `<span>${fmt(d.plans[wan])} Mbps plan</span>` : ""}</div></div>
-      ${body}${spark}</article>`;
+      <div class="isp-head"><div class="isp-name">${esc(labelOf(wan))}${d.plans[wan] ? `<span>Configured plan: ${fmt(d.plans[wan])} Mbps</span>` : ""}</div></div>
+      ${newest?.error && last ? `<p class="dip">Latest attempt failed: ${esc(newest.error)}. Showing the earlier successful measurement below.</p>` : ""}${body}${spark}</article>`;
   }).join("");
 }
 $("run-speed").onclick = async () => {

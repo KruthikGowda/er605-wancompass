@@ -146,3 +146,5 @@ footer{border-top:1px solid var(--line);margin-top:32px;padding-top:16px;font-si
 .monitor-details[open] .monitor-policy{margin-top:4px}
 .chart-key{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.chart-key span{color:var(--c);font-weight:600}
 .dashboard-page[hidden] summary::before{content:none}
+.speed-overview{margin-top:24px}.speed-overview h2{margin-bottom:14px}.speed-overview .speed-nums{display:grid;grid-template-columns:1fr 1fr;gap:16px}.speed-overview .speed-nums b{display:block;font-size:34px;font-weight:550;margin:7px 0}.speed-overview .isp-name span{display:block;margin:6px 0 0;font:400 11px var(--body);letter-spacing:0}.speed-overview .facts{font-size:12px}.speed-overview .run{min-height:44px;font-size:13px}.speed-overview .dip{font-size:13px}
+@media(max-width:440px){.speed-overview h2{align-items:flex-start;flex-wrap:wrap;gap:12px}.speed-overview .speed-nums b{font-size:30px}}
