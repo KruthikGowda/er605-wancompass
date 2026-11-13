@@ -16,7 +16,9 @@ FORMS = (('dhcps', 'reservation'), ('ipgroup', 'ipscope_reservation'),
 
 
 def preparation_plan(before, approval, *, pause_name=None):
-    if (not isinstance(approval, dict) or set(approval) != {'confirmed','mac','ip','wan','note'}
+    required = {'confirmed','mac','ip','wan','note'}
+    if (not isinstance(approval, dict) or set(approval) not in (required, required | {'oneplus_trial_confirmed'})
+            or ('oneplus_trial_confirmed' in approval and approval['oneplus_trial_confirmed'] is not True)
             or approval['confirmed'] is not True or not isinstance(approval['note'], str)
             or not approval['note'].startswith('NetPulse: ') or len(approval['note']) > 64
             or any(ord(c) < 32 for c in approval['note'])):
@@ -72,7 +74,10 @@ def preparation_plan(before, approval, *, pause_name=None):
     virtual = deepcopy(before)
     for key, obj in zip(COLLECTIONS, objects): virtual[key].append(deepcopy(obj))
     # Reuse exact firmware, identity, protection, unique-lease and scope checks.
-    child = build_plan(virtual, {'confirmed':True,'mac':mac,'ip':ip,'action':'pause','wan':approval['wan']},
+    child_approval = {'confirmed':True,'mac':mac,'ip':ip,'action':'pause','wan':approval['wan']}
+    if 'oneplus_trial_confirmed' in approval:
+        child_approval['oneplus_trial_confirmed'] = approval['oneplus_trial_confirmed']
+    child = build_plan(virtual, child_approval,
                        acl_name=pause_name if pause_name is not None else 'NP_TEST_P_' + '0' * 32)
     plan = {'kind':'preparation', 'before':deepcopy(before), 'approval':deepcopy(approval), 'objects':objects}
     if pause_name is not None: plan['pause'] = child['change']

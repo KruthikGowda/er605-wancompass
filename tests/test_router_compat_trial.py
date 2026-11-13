@@ -121,6 +121,21 @@ class CandidateTests(unittest.TestCase):
         actual_client_shape['hardware_version'] = 'ER605 v2.30'
         self.assertEqual(build_plan(actual_client_shape, approval(), acl_name=ACL_NAME)['before'], actual_client_shape)
 
+    def test_oneplus_exception_is_exact_reviewed_approval_not_protection_bypass(self):
+        state = deepcopy(self.state); state['clients'][0]['name'] = 'OnePlus test phone'
+        with self.assertRaises(CompatibilityError): build_plan(state, approval(), acl_name=ACL_NAME)
+        approved = {**approval(), 'oneplus_trial_confirmed': True}
+        plan = build_plan(state, approved, acl_name=ACL_NAME)
+        self.assertEqual(validate_plan(plan), plan)
+        for value in (False, 1, 'true', None):
+            with self.assertRaises(CompatibilityError):
+                build_plan(state, {**approved, 'oneplus_trial_confirmed': value}, acl_name=ACL_NAME)
+        for key, value in [('protected_ips', [IP]), ('protected_macs', [MAC])]:
+            blocked = deepcopy(state); blocked[key] = value
+            with self.assertRaises(CompatibilityError): build_plan(blocked, approved, acl_name=ACL_NAME)
+        changed = deepcopy(plan); changed['approval'].pop('oneplus_trial_confirmed')
+        with self.assertRaises(CompatibilityError): validate_plan(changed)
+
     def test_pause_and_each_wan_strict_transition_restore_before_state(self):
         for action, wan in [('pause','WAN1'), ('only_wan','WAN1'), ('only_wan','WAN2')]:
             with self.subTest(action=action, wan=wan):

@@ -43,7 +43,9 @@ def build_plan(snapshot: dict, approval: dict, *, acl_name: str | None = None) -
     Model/hardware strings are intentionally narrow; unexpected formats need review.
     Existing prerequisite objects are required; the trial creates none implicitly.
     """
-    if not isinstance(approval, dict) or set(approval) != {"confirmed", "mac", "ip", "action", "wan"}:
+    required = {"confirmed", "mac", "ip", "action", "wan"}
+    if (not isinstance(approval, dict) or set(approval) not in (required, required | {'oneplus_trial_confirmed'})
+            or ('oneplus_trial_confirmed' in approval and approval['oneplus_trial_confirmed'] is not True)):
         raise CompatibilityError("An exact reviewed one-device approval is required.")
     if approval["confirmed"] is not True:
         raise CompatibilityError("Explicit owner approval is required.")
@@ -79,7 +81,8 @@ def build_plan(snapshot: dict, approval: dict, *, acl_name: str | None = None) -
             or len(leases) != 1 or leases[0].get("mac") != mac or leases[0].get("ip") != ip
             or leases[0].get("enable") != "on"):
         raise CompatibilityError("Unique matching current lease and enabled reservation are required.")
-    if any('oneplus' in str(clients[0].get(k, '')).casefold() for k in ('name', 'hostname', 'manufacturer')):
+    if (any('oneplus' in str(clients[0].get(k, '')).casefold() for k in ('name', 'hostname', 'manufacturer'))
+            and approval.get('oneplus_trial_confirmed') is not True):
         raise CompatibilityError("This endpoint is excluded from compatibility trials.")
     suffix = mac.replace("-", "")
     def named(key, name):

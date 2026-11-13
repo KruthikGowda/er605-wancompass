@@ -89,6 +89,21 @@ class PreparationTests(unittest.TestCase):
                 record = next_record
         return record
 
+    def test_single_phone_exception_survives_journal_but_preserves_intent_guard(self):
+        state = deepcopy(self.before); state['clients'][0]['name'] = 'OnePlus test phone'
+        with self.assertRaises(CompatibilityError): preparation_plan(state, review())
+        approved = {**review(), 'oneplus_trial_confirmed': True}
+        plan = preparation_plan(state, approved, pause_name='NP_TEST_P_' + 'B' * 32)
+        self.assertEqual(validate_preparation(plan), plan)
+        record = self.journal.arm(plan, 120)
+        self.assertTrue(self.journal.read()['plan']['approval']['oneplus_trial_confirmed'])
+        self.journal.clear(record['nonce'])
+        state['preparation_blocked_macs'] = [MAC]
+        with self.assertRaises(CompatibilityError): preparation_plan(state, approved)
+        for value in (False, 1, 'true', None):
+            with self.assertRaises(CompatibilityError):
+                preparation_plan(self.before, {**review(), 'oneplus_trial_confirmed': value})
+
     def test_complete_transaction_tears_down_in_dependency_order(self):
         self.adapter.active = True
         result = self.run_plan()
