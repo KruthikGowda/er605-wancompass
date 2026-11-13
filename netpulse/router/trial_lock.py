@@ -2,7 +2,7 @@
 from pathlib import Path
 
 TRIAL_JOURNAL = Path('/var/lib/netpulse/router-compat-trial/journal.json')
-TRIAL_PENDING = Path('/var/lib/netpulse/router-compat-trial.pending')
+TRIAL_PENDING = Path('/var/lib/netpulse/router-compat-status/pending')
 
 
 def trial_recovery_pending():

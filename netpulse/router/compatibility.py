@@ -58,7 +58,7 @@ def build_plan(snapshot: dict, approval: dict, *, acl_name: str | None = None) -
         raise CompatibilityError("An exact private IPv4 endpoint is required.") from None
     if approval["action"] not in {"pause", "only_wan"} or approval["wan"] not in {"WAN1", "WAN2"}:
         raise CompatibilityError("Only one reviewed pause or Only-WAN trial is supported.")
-    if (snapshot.get("model") != "ER605" or snapshot.get("hardware_version") not in {"2.30", "v2.30", "ER605 v2.30"}
+    if (snapshot.get("model") not in {"ER605", "ER605 v2.30"} or snapshot.get("hardware_version") not in {"2.30", "v2.30", "ER605 v2.30"}
             or snapshot.get("firmware_version") != CANDIDATE_FIRMWARE
             or type(snapshot.get("uptime")) is not int or snapshot["uptime"] < 300
             or snapshot.get("ready") is not True or ip in snapshot.get("protected_ips", [])

@@ -53,6 +53,10 @@ class TrialJournal:
 
     def _directory(self):
         private_metadata(self.path.parent.lstat(), directory=True)
+        status = self.marker.parent.lstat()
+        if (not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode)
+                or (os.name == 'posix' and (status.st_uid != required_uid() or status.st_mode & 0o022))):
+            raise CompatibilityError("Trial status directory must be owned and not writable by others.")
 
     @contextmanager
     def locked(self):
@@ -67,15 +71,17 @@ class TrialJournal:
         finally:
             os.close(fd)
 
-    def arm(self, plan, seconds, restart_service=False):
+    def arm(self, plan, seconds, restart_service=False, mode='live'):
         validate_plan(plan)
         if type(seconds) is not int or not 1 <= seconds <= 600:
             raise CompatibilityError("Trial deadline must be 1–600 seconds.")
         if type(restart_service) is not bool:
             raise CompatibilityError("Invalid service restoration intent.")
+        if mode not in {'live', 'rehearsal'}:
+            raise CompatibilityError("Unrecognized recovery mode.")
         self._directory()
         start = self.clock()
-        record = {'version': 1, 'nonce': str(uuid.uuid4()), 'boot': self.boot(),
+        record = {'version': 1, 'mode': mode, 'nonce': str(uuid.uuid4()), 'boot': self.boot(),
                   'created': start, 'deadline': start + seconds, 'owner_pid': os.getpid(),
                   'restart_service': restart_service, 'plan': deepcopy(plan)}
         self._validate(record)
@@ -96,9 +102,11 @@ class TrialJournal:
         return record
 
     def _validate(self, record):
-        keys = {'version', 'nonce', 'boot', 'created', 'deadline', 'owner_pid', 'restart_service', 'plan'}
+        keys = {'version', 'mode', 'nonce', 'boot', 'created', 'deadline', 'owner_pid', 'restart_service', 'plan'}
         if not isinstance(record, dict) or set(record) != keys or type(record['version']) is not int or record['version'] != 1:
             raise CompatibilityError("Unrecognized trial journal format.")
+        if record['mode'] not in {'live', 'rehearsal'}:
+            raise CompatibilityError("Unrecognized recovery mode.")
         for key in ('nonce', 'boot'):
             if not isinstance(record[key], str) or str(uuid.UUID(record[key])) != record[key]:
                 raise CompatibilityError("Invalid trial journal identity.")
@@ -149,7 +157,16 @@ class TrialJournal:
         if self.marker.read_text() != nonce:
             raise CompatibilityError("Recovery marker identity changed; manual review is required.")
         self.path.unlink(missing_ok=True)
-        self.marker.unlink()
+        try:
+            self.marker.unlink()
+        except OSError:
+            # Keep the exact undo record if status-marker removal fails. This
+            # also covers an incorrectly staged sandbox/filesystem permission.
+            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+            with os.fdopen(fd, 'w') as stream:
+                json.dump(current, stream); stream.flush(); os.fsync(stream.fileno())
+            self._sync_directory()
+            raise
         ready = self.path.with_suffix('.ready')
         if ready.exists():
             private_metadata(ready.lstat())

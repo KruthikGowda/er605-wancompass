@@ -167,6 +167,30 @@ class IndependentWatchdog:
         return False
 
 
+class RehearsalAdapter:
+    """Synthetic no-network recovery adapter, selected only by a journaled mode.
+
+    No ER605 client, credentials or socket is constructed. Mutation attempts fail.
+    It exercises the same watchdog, locking, service restoration and clear path.
+    """
+    def __init__(self, snapshot):
+        self.before = deepcopy(snapshot)
+
+    @contextmanager
+    def transaction(self):
+        yield
+
+    def snapshot(self):
+        return deepcopy(self.before)
+
+    def apply(self, plan):
+        raise CompatibilityError('Router mutations are forbidden during rehearsal.')
+
+    def restore(self, plan, current):
+        if current != plan['before']:
+            raise CompatibilityError('Rehearsal state differs; no router recovery may be attempted.')
+
+
 def pid_alive(pid):
     try:
         os.kill(pid, 0)
@@ -235,13 +259,16 @@ def main(argv=None):
             if journal.marker.exists():
                 raise CompatibilityError('Orphan trial marker requires manual review.')
             return 0
-        cfg = load('/etc/netpulse/config.toml')
         # Recovery ignores ordinary enable flags/kill switch, but only restores
         # exact journaled owned objects on the exact original router/build.
         restart = not args.recover_on_boot and (record['restart_service'] or service_active())
         if service_active():
             subprocess.run(['systemctl', 'stop', 'netpulse'], check=True, timeout=30)
-        adapter = RouterTrialAdapter(cfg, protected_ips=record['plan']['before']['protected_ips'], ready=lambda: False)
+        if record['mode'] == 'rehearsal':
+            adapter = RehearsalAdapter(record['plan']['before'])
+        else:
+            cfg = load('/etc/netpulse/config.toml')
+            adapter = RouterTrialAdapter(cfg, protected_ips=record['plan']['before']['protected_ips'], ready=lambda: False)
         recover(journal, adapter, after_restore=resume_monitor if restart else None,
                 expected_nonce=record['nonce'])
         return 0

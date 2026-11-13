@@ -13,7 +13,7 @@ from netpulse.router.compatibility import (CANDIDATE_FIRMWARE, CompatibilityErro
                                            build_plan, capabilities, validate_plan)
 from netpulse.router.trial import TrialJournal, recover, run_trial
 from netpulse.router import trial_lock
-from tools.router_compat_trial import RouterTrialAdapter, watch, main, IndependentWatchdog
+from tools.router_compat_trial import RouterTrialAdapter, RehearsalAdapter, watch, main, IndependentWatchdog
 
 MAC = '02-00-00-00-00-11'
 IP = '10.77.0.11'
@@ -117,6 +117,8 @@ class CandidateTests(unittest.TestCase):
         self.assertFalse(capabilities(CANDIDATE_FIRMWARE + 'x')['candidate_trial'])
         actual_client_shape = deepcopy(self.state)
         actual_client_shape['cert_sha256'] = 'A' * 64  # ER605Client normalizes pins to uppercase.
+        actual_client_shape['model'] = 'ER605 v2.30'
+        actual_client_shape['hardware_version'] = 'ER605 v2.30'
         self.assertEqual(build_plan(actual_client_shape, approval(), acl_name=ACL_NAME)['before'], actual_client_shape)
 
     def test_pause_and_each_wan_strict_transition_restore_before_state(self):
@@ -378,3 +380,40 @@ class CandidateTests(unittest.TestCase):
             recover(self.journal, self.adapter, expected_nonce=OTHER_BOOT)
         self.assertNotIn('delete', self.adapter.writes)
         self.assertTrue(self.journal.marker.exists())
+
+    def test_rehearsal_entry_point_never_constructs_a_router_client_or_loads_credentials(self):
+        from tools import router_compat_trial as worker
+        self.journal.arm(self.plan, 60, mode='rehearsal')
+        with patch.object(worker, 'root_runtime', return_value=True), \
+             patch.object(worker, 'TRIAL_JOURNAL', self.journal.path), \
+             patch.object(worker, 'TRIAL_PENDING', self.journal.marker), \
+             patch.object(worker, 'TrialJournal', return_value=self.journal), \
+             patch.object(worker, 'service_active', return_value=False), \
+             patch.object(worker, 'load', side_effect=AssertionError('No config/credentials needed')), \
+             patch.object(worker, 'ER605Client', side_effect=AssertionError('No router network allowed')), \
+             patch.object(worker, 'RouterTrialAdapter', side_effect=AssertionError('No real adapter allowed')):
+            self.assertEqual(worker.main(['--recover-on-boot']), 0)
+        self.assertFalse(self.journal.path.exists())
+        self.assertFalse(self.journal.marker.exists())
+
+    def test_rehearsal_adapter_refuses_any_mutation_or_changed_state(self):
+        adapter = RehearsalAdapter(self.state)
+        with self.assertRaises(CompatibilityError): adapter.apply(self.plan)
+        changed = deepcopy(self.state); changed['acls'] = [self.plan['change']]
+        with self.assertRaises(CompatibilityError): adapter.restore(self.plan, changed)
+        adapter.restore(self.plan, self.state)
+
+    def test_marker_removal_failure_retains_exact_recovery_record(self):
+        record = self.journal.arm(self.plan, 60)
+        original = Path.unlink
+        def unlink(path, *args, **kwargs):
+            if path == self.journal.marker: raise PermissionError('synthetic sandbox restriction')
+            return original(path, *args, **kwargs)
+        with patch.object(Path, 'unlink', unlink), self.assertRaises(PermissionError):
+            recover(self.journal, self.adapter)
+        self.assertEqual(self.journal.read(), record)
+        self.assertTrue(self.journal.marker.exists())
+
+    def test_restricted_unit_can_use_root_owned_status_directory(self):
+        from netpulse.router.trial_lock import TRIAL_PENDING
+        self.assertEqual(str(TRIAL_PENDING).replace('\\', '/'), '/var/lib/netpulse/router-compat-status/pending')
