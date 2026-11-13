@@ -142,3 +142,22 @@ three minutes add no usage. Unchanged bytes with a nonzero native reported rate
 wait for refresh, then rebase after three minutes if still stale. Intervals across
 midnight are apportioned by time and marked estimated. Transactional baselines
 preserve totals across restarts without recounting. No earlier usage is reconstructed.
+## Dashboard navigation and freshness
+
+Overview shows combined current WAN traffic, observed daily data, native WAN
+charts, Internet evidence and probe-quality graphs. Devices, History and System
+have separate workspaces with direct anchor links and browser Back support.
+Appearance can follow the system or use a saved light/dark preference; fonts and
+assets remain local so the interface works without Internet access.
+
+Combined current traffic is unavailable if any WAN lacks a valid fresh rate.
+Daily sums include only observed WANs and identify partial coverage. Device
+rankings omit rows without qualified observations; capture-off/unknown states
+show an explanation while preserving qualified history on its recorded date.
+The Overview and Devices date selectors share the selected usage date.
+
+Live freshness uses the server's HTTP Date plus monotonic elapsed browser time,
+rather than assuming the Pi and viewing computer have identical wall clocks.
+The one-second HTTP Date precision is rounded conservatively forward. Without a
+valid Date header, browser time remains the fallback. Real missing/stale samples
+remain unavailable; missing evidence is never displayed as confirmed WAN failure.

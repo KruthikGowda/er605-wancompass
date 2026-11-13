@@ -7,6 +7,71 @@ import unittest
 
 @unittest.skipUnless(shutil.which("node"), "Node is needed for dashboard rendering checks")
 class DashboardMeasurements(unittest.TestCase):
+    def test_feed_freshness_uses_server_time_and_monotonic_elapsed_time(self):
+        html = (Path(__file__).resolve().parents[1] / "netpulse/web/static/index.html").read_text(encoding="utf-8")
+        source = html[html.index("function feedNow("):html.index("let deviceData =")]
+        script = r'''
+const assert=require('node:assert/strict');
+let mono=1000,wall=9999999999999;
+Object.defineProperty(globalThis,'performance',{value:{now:()=>mono}});
+Date.now=()=>wall;
+const server='Fri, 13 Nov 2026 09:30:00 GMT',seconds=Date.parse(server)/1000;
+let dateHeader=server;
+const fetch=async()=>({ok:true,headers:{get:()=>dateHeader},json:async()=>({updated:seconds+.8})});
+''' + source + r'''
+(async()=>{
+ const data=await getJSON('/synthetic');
+ assert.equal(feedNow(data),seconds+1);
+ assert.ok(feedNow(data)-data.updated>=0);
+ wall=0;mono+=3000;assert.equal(feedNow(data),seconds+4);
+ wall=9999999999999;mono+=30000;
+ assert.ok(feedNow(data)-data.updated>30);
+ assert.deepEqual(Object.keys(data),['updated']);
+ dateHeader=null;const fallback=await getJSON('/synthetic');
+ assert.equal(feedNow(fallback),wall/1000);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+        completed = subprocess.run([shutil.which("node"), "-e", script], capture_output=True,
+                                   text=True, encoding="utf-8", timeout=10)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
+    def test_combined_traffic_never_presents_missing_wans_as_zero(self):
+        source = (Path(__file__).resolve().parents[1] / "netpulse/web/static/usage.js").read_text(encoding="utf-8")
+        summary = source[source.index("function renderUsageSummary("):source.index("async function refreshUsage(")]
+        script = r'''
+const assert=require('node:assert/strict'),nodes=new Map();
+const $=id=>{if(!nodes.has(id))nodes.set(id,{textContent:'',innerHTML:''});return nodes.get(id);};
+const fmt=(v,d)=>Number(v).toFixed(d),usageGB=v=>`${(v/1e9).toFixed(2)} GB`;
+''' + summary + r'''
+const row={available:true,down_mbps:20,up_mbps:5,daily:{observed_seconds:60,down_bytes:1e9,up_bytes:0}};
+const data={day:'2026-11-13',wans:[structuredClone(row),structuredClone(row)]};
+renderUsageSummary(data,true);
+assert.match($('total-download').innerHTML,/40.00/);
+assert.match($('total-upload').innerHTML,/10.00/);
+assert.equal($('total-data').textContent,'2.00 GB');
+for(const invalid of [null,NaN,Infinity]){
+ data.wans[1].down_mbps=invalid;
+ renderUsageSummary(data,true);
+ assert.equal($('total-download').innerHTML,'—');
+ assert.equal($('total-upload').innerHTML,'—');
+}
+data.wans[1].down_mbps=20;data.wans[1].available=false;
+renderUsageSummary(data,true);
+assert.equal($('total-download').innerHTML,'—');
+data.wans[1].available=true;renderUsageSummary(data,false);
+assert.equal($('total-download').innerHTML,'—');
+assert.equal($('total-data').textContent,'2.00 GB');
+data.wans[1].daily.observed_seconds=0;renderUsageSummary(data,true);
+assert.equal($('total-data').textContent,'1.00 GB');
+assert.match($('total-data-note').textContent,/partial WAN coverage/);
+renderUsageSummary({wans:[]},false);
+assert.equal($('total-download').innerHTML,'—');
+assert.equal($('total-data').textContent,'—');
+'''
+        completed = subprocess.run([shutil.which("node"), "-e", script], capture_output=True,
+                                   text=True, encoding="utf-8", timeout=10)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
     def test_partial_history_and_hover_preserve_missing_observations(self):
         html = (Path(__file__).resolve().parents[1] / "netpulse/web/static/index.html").read_text(encoding="utf-8")
         history = html[html.index("async function refreshHistory()"):html.index("/* ---------- events, in plain words")]

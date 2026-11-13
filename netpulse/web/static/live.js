@@ -16,7 +16,7 @@ function webEvidence(w, now) {
 
 function renderNetworkOverview(s) {
   const opened = Array.from($("isps").querySelectorAll("details")).map(detail=>detail.open);
-  const now = Date.now()/1000, monitorAge = now - Number(s.updated);
+  const now = feedNow(s), monitorAge = now - Number(s.updated);
   const fresh = Number.isFinite(monitorAge) && monitorAge >= 0 && monitorAge <= 30;
   const rows = s.wans.map(w => ({w,e:fresh ? webEvidence(w,now) :
     {state:"UNKNOWN",reason:"Monitor data is stale; current Internet usability is unconfirmed",checks:[],age:null}}));
@@ -26,13 +26,13 @@ function renderNetworkOverview(s) {
   $("monitor").dataset.level = level;
   $("verdict").textContent = !fresh ? "Monitor data is stale" : unknown ? "Checking Internet usability" :
     online === rows.length ? "Both Internet paths are usable" : online ? "One Internet path needs attention" : "Internet checks need attention";
-  $("because").textContent = !fresh ? "The service has stopped publishing fresh measurements. Last known readings are retained for reference." :
+  $("because").textContent = !fresh ? "Probe measurements are missing or delayed. Router traffic is collected separately; retained probe readings are for reference." :
     rows.map(({w,e}) => `${labelOf(w.name)}: ${INTERNET_LABELS[e.state] || "Checking"}`).join(" · ");
   if (!fresh) $("updated").classList.add("stale");
   const delivery = s.alert_policy?.delivery_since_start || {};
   const tg = !s.alert_policy?.telegram_enabled ? "Off" : delivery.durable_store_ok === false ? "Queue storage needs attention" :
     delivery.queued ? `${delivery.queued} pending` : "No pending messages";
-  $("ops-summary").innerHTML = `<div><span>INTERNET EVIDENCE</span><strong>${online} / ${rows.length} paths passed</strong></div>
+  $("ops-summary").innerHTML = `<div><span>INTERNET EVIDENCE</span><strong>${fresh && !unknown ? online+" / "+rows.length+" paths passed" : "Awaiting fresh checks"}</strong></div>
     <div><span>MEASUREMENT FEED</span><strong>${fresh ? "Fresh · 10 second samples" : "Stale / unavailable"}</strong></div>
     <div><span>TELEGRAM</span><strong>${esc(tg)}</strong></div><div><span>ALERT CONFIRMATION</span><strong>2 failures · partial needs 3</strong></div>`;
   $("isps").innerHTML = rows.map(({w,e}) => {
@@ -69,7 +69,7 @@ function drawLive() {
   if (!lastStatus) return;
   const focused = document.activeElement?.id;
   const opened = Array.from($("live-plots").querySelectorAll("details")).map(detail=>detail.open);
-  const now = Date.now()/1000, minutes = Number($("live-window").value), key = $("live-metric").value;
+  const now = feedNow(liveData || lastStatus), minutes = Number($("live-window").value), key = $("live-metric").value;
   const t0 = now - minutes * 60, unit = key === "loss_pct" ? "%" : "ms";
   const age = liveData?.updated == null ? Infinity : now-liveData.updated;
   const fresh = age >= 0 && age <= (liveData?.max_age_seconds || 30);
@@ -119,3 +119,33 @@ document.addEventListener("DOMContentLoaded",()=>{
   document.addEventListener("visibilitychange",()=>{if(!document.hidden){refreshStatus();refreshLive();}});
   window.addEventListener("resize",()=>{clearTimeout(window.wanLiveResize);window.wanLiveResize=setTimeout(drawLive,150);});
 });
+/* Anchor links remain usable without script; with script they become focused workspaces. */
+function setupDashboardWorkspace(){
+  const pages=Array.from(document.querySelectorAll('[data-dashboard-page]'));
+  const links=Array.from(document.querySelectorAll('.section-nav a'));
+  const views={monitor:'overview','devices-heading':'devices','history-heading':'history','system-heading':'system'};
+  const titles={overview:'Network overview',devices:'Devices & usage',history:'Network history',system:'System & diagnostics'};
+  function selectView(){
+    const anchor=location.hash.slice(1),key=views[anchor] || 'overview';
+    pages.forEach(page=>{page.hidden=page.dataset.dashboardPage!==key;});
+    links.forEach(link=>{if(views[link.hash.slice(1)]===key)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
+    $('workspace-title').textContent=titles[key];
+    window.scrollTo({top:0,behavior:'instant'});
+    // Previously hidden charts need their real width, including after browser Back.
+    requestAnimationFrame(()=>{drawLive();renderUsage();if(key==='history')refreshHistory();});
+  }
+  window.addEventListener('hashchange',selectView);
+  selectView();
+  const theme=$('dashboard-theme');
+  function applyTheme(value){
+    if(value==='auto')document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.dataset.theme=value;
+    try{localStorage.setItem('wancompass-theme',value);}catch(_){}
+    drawLive();renderUsage();refreshHistory();
+  }
+  try{const saved=localStorage.getItem('wancompass-theme');if(['light','dark','auto'].includes(saved))theme.value=saved;}catch(_){}
+  theme.onchange=()=>applyTheme(theme.value);
+  applyTheme(theme.value);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(theme.value==='auto'){drawLive();renderUsage();refreshHistory();}});
+}
+document.addEventListener('DOMContentLoaded',setupDashboardWorkspace);
