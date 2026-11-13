@@ -72,7 +72,12 @@ class TrialJournal:
             os.close(fd)
 
     def arm(self, plan, seconds, restart_service=False, mode='live'):
-        validate_plan(plan)
+        preparation = isinstance(plan,dict) and plan.get('kind') == 'preparation'
+        if preparation:
+            from netpulse.router.preparation import validate_preparation
+            validate_preparation(plan)
+        else:
+            validate_plan(plan)
         if type(seconds) is not int or not 1 <= seconds <= 600:
             raise CompatibilityError("Trial deadline must be 1–600 seconds.")
         if type(restart_service) is not bool:
@@ -84,6 +89,8 @@ class TrialJournal:
         record = {'version': 1, 'mode': mode, 'nonce': str(uuid.uuid4()), 'boot': self.boot(),
                   'created': start, 'deadline': start + seconds, 'owner_pid': os.getpid(),
                   'restart_service': restart_service, 'plan': deepcopy(plan)}
+        if preparation:
+            record.update(version=2,receipts=[],inflight=None)
         self._validate(record)
         payload = json.dumps(record, allow_nan=False).encode()
         if len(payload) > MAX_RECORD:
@@ -103,7 +110,9 @@ class TrialJournal:
 
     def _validate(self, record):
         keys = {'version', 'mode', 'nonce', 'boot', 'created', 'deadline', 'owner_pid', 'restart_service', 'plan'}
-        if not isinstance(record, dict) or set(record) != keys or type(record['version']) is not int or record['version'] != 1:
+        preparation = isinstance(record,dict) and isinstance(record.get('plan'),dict) and record['plan'].get('kind') == 'preparation'
+        if preparation: keys.update({'receipts','inflight'})
+        if not isinstance(record, dict) or set(record) != keys or type(record['version']) is not int or record['version'] != (2 if preparation else 1):
             raise CompatibilityError("Unrecognized trial journal format.")
         if record['mode'] not in {'live', 'rehearsal'}:
             raise CompatibilityError("Unrecognized recovery mode.")
@@ -115,8 +124,36 @@ class TrialJournal:
                 or type(record['owner_pid']) is not int or record['owner_pid'] < 1
                 or type(record['restart_service']) is not bool):
             raise CompatibilityError("Invalid trial deadline or owner.")
-        validate_plan(record['plan'])
+        if preparation:
+            from netpulse.router.preparation import validate_progress
+            validate_progress(record)
+        else:
+            validate_plan(record['plan'])
         return record
+
+    def replace(self, updated, expected):
+        """Durably advance preparation intent/receipts; caller holds locked()."""
+        self._validate(updated)
+        if self.read() != expected or expected['version'] != 2 or updated['version'] != 2:
+            raise CompatibilityError('Preparation generation changed during journal update.')
+        mutable = {'receipts','inflight'}
+        if any(updated[k] != expected[k] for k in expected if k not in mutable):
+            raise CompatibilityError('Immutable preparation approval/deadline changed.')
+        old, new = expected['receipts'], updated['receipts']
+        if len(new) not in {len(old),len(old)+1} or new[:len(old)] != old:
+            raise CompatibilityError('Preparation receipts must be append-only.')
+        previous = expected['inflight']
+        if previous is not None and (updated['inflight'] is None or not previous <= updated['inflight'] <= previous+1):
+            raise CompatibilityError('Preparation intent cannot move backward or skip writes.')
+        payload = json.dumps(updated,allow_nan=False).encode()
+        if len(payload)>MAX_RECORD: raise CompatibilityError('Preparation journal exceeds its size limit.')
+        temp = self.path.with_name('.journal-update-'+str(uuid.uuid4()))
+        fd = os.open(temp,os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_NOFOLLOW',0),0o600)
+        try:
+            with os.fdopen(fd,'wb') as stream:
+                stream.write(payload);stream.flush();os.fsync(stream.fileno())
+            os.replace(temp,self.path);self._sync_directory()
+        finally: temp.unlink(missing_ok=True)
 
     def read(self):
         self._directory()
@@ -231,10 +268,18 @@ def recover(journal, adapter, *, after_restore=None, expected_nonce=None):
         with adapter.transaction():
             current = adapter.snapshot()
             assert_identity(current, plan)
-            adapter.restore(plan, current)
+            if plan.get('kind') == 'preparation':
+                from netpulse.router.preparation import restore_preparation
+                restore_preparation(journal,record,adapter,current)
+            else:
+                adapter.restore(plan, current)
             restored = adapter.snapshot()
             assert_identity(restored, plan)
-            assert_collections(restored, plan['before'])
+            if plan.get('kind') == 'preparation':
+                from netpulse.router.preparation import assert_preparation_collections
+                assert_preparation_collections(restored,plan['before'])
+            else:
+                assert_collections(restored, plan['before'])
         if after_restore is not None:
             after_restore()
         journal.clear(record['nonce'])

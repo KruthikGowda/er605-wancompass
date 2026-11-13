@@ -541,6 +541,38 @@ class ER605Client:
         if any(isinstance(x, dict) and x.get("name") == name for x in (self.get(module, form) or [])):
             raise RouterError(f"{module}/{form} delete read-back failed")
 
+    def delete_exact_preparation_row(self, module: str, form: str, expected: dict) -> None:
+        """Delete only a captured prerequisite receipt, using freshly resolved identity."""
+        allowed = {('dhcps','reservation'),('ipgroup','ipscope_reservation'),
+                   ('ipgroup','ipgroup_reservation'),('policy_route','policy_route')}
+        if not self._stok or (module,form) not in allowed or not isinstance(expected,dict):
+            raise RouterError('Unreviewed prerequisite deletion.')
+        reservation = (module,form) == ('dhcps','reservation')
+        if reservation:
+            if (not str(expected.get('id','')).isdigit() or not str(expected.get('note','')).startswith('NetPulse: ')
+                    or str(expected.get('bind','')).lower() not in {'0','off','false'}):
+                raise RouterError('Unreviewed reservation deletion receipt.')
+        elif not re.fullmatch(r'NP_[IGR]_[A-F0-9]{12}',str(expected.get('name',''))):
+            raise RouterError('Unreviewed prerequisite namespace.')
+        rows = self.get(module,form)
+        if not isinstance(rows,list) or any(not isinstance(r,dict) for r in rows):
+            raise RouterError('Unreadable prerequisite collection.')
+        def identity(row):
+            return (str(row.get('id')) == str(expected.get('id')) if reservation
+                    else row.get('name') == expected['name'])
+        found = [(i,r) for i,r in enumerate(rows) if identity(r)]
+        def normalized(values): return [{k:v for k,v in r.items() if k!='index'} for r in values]
+        if len(found)!=1 or normalized([found[0][1]]) != normalized([expected]):
+            raise RouterError('Prerequisite receipt changed; refusing deletion.')
+        index,_ = found[0]
+        result = self._post(f'/cgi-bin/luci/;stok={self._stok}/admin/{module}?form={form}',
+            {'data':json.dumps({'method':'delete','params':{'index':str(index),
+                'key':str(expected['id']) if reservation else f'key-{index}'}})})
+        if str(result.get('error_code')) != '0': raise RouterError('Prerequisite delete was not acknowledged.')
+        after = self.get(module,form)
+        if not isinstance(after,list) or normalized(after) != normalized(rows[:index]+rows[index+1:]):
+            raise RouterError('Prerequisite delete did not preserve the remaining collection.')
+
     def add_dhcp_reservation(self, rows: list, new: dict) -> dict:
         """Add one enabled DHCP reservation with IP-MAC binding explicitly off.
 

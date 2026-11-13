@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import json
 from contextlib import contextmanager
 from copy import deepcopy
 import os
@@ -20,7 +21,7 @@ from netpulse.router.compatibility import CompatibilityError, CANDIDATE_FIRMWARE
 from netpulse.router.control import _balance_enabled
 from netpulse.router.er605 import ER605Client, acl_pilot_effective_match
 from netpulse.router.trial import (TrialJournal, boottime, private_metadata, recover,
-                                   rows_equal)
+                                   rows_equal, MAX_RECORD)
 from netpulse.router.trial_lock import TRIAL_JOURNAL, TRIAL_PENDING
 from netpulse.storage.sqlite import KeyValueFile
 
@@ -96,6 +97,14 @@ class RouterTrialAdapter:
             ('ipscopes','ipgroup','ipscope_reservation'), ('ipgroups','ipgroup','ipgroup_reservation'),
             ('routes','policy_route','policy_route')):
             raw[key] = self.client.get(module, form)
+        raw['lan'] = self.client.get('dhcps','lan')
+        raw['lan_scopes'] = self.client.get('ipgroup','ipscope_list')
+        from netpulse.storage import sqlite
+        from netpulse.storage.pauses import blocked_macs
+        blocked = blocked_macs(self.cfg.db_path) | set(sqlite.device_routes(self.cfg.db_path))
+        for group in sqlite.device_groups(self.cfg.db_path):
+            if group.get('smart_routing_enabled'): blocked.update(group.get('members',[]))
+        raw['preparation_blocked_macs'] = sorted(blocked)
         raw['acls'] = self.client.read_acl_pilot_rows()
         balance = self.client.get('balance', 'balance_basic')
         raw['ready'] = bool(self.ready() and _balance_enabled(balance) is True)
@@ -120,6 +129,17 @@ class RouterTrialAdapter:
         else:
             old = next(r for r in plan['before']['routes'] if r['name'] == plan['change']['name'])
             self._set_route(old, plan['change'])
+
+    def create_preparation_object(self,index,obj):
+        from netpulse.router.preparation import FORMS
+        module,form = FORMS[index]
+        rows = self.client.get(module,form)
+        if index == 0: return self.client.add_dhcp_reservation(rows,obj)
+        return self.client.add_row(module,form,rows,obj)
+
+    def delete_preparation_object(self,index,receipt):
+        from netpulse.router.preparation import FORMS
+        self.client.delete_exact_preparation_row(*FORMS[index],receipt)
 
     def restore(self, plan, current):
         if plan['approval']['action'] == 'pause':
@@ -189,6 +209,41 @@ class RehearsalAdapter:
     def restore(self, plan, current):
         if current != plan['before']:
             raise CompatibilityError('Rehearsal state differs; no router recovery may be attempted.')
+
+
+class RehearsalPreparationAdapter:
+    """Persisted synthetic state, with no router client/configuration/network path."""
+    def __init__(self,record,path):
+        if record['mode'] != 'rehearsal' or record['plan'].get('kind') != 'preparation':
+            raise CompatibilityError('Synthetic preparation mode is required.')
+        self.path = Path(path)
+        private_metadata(self.path.lstat())
+        fd = os.open(self.path,os.O_RDONLY|getattr(os,'O_NOFOLLOW',0))
+        with os.fdopen(fd,'rb') as stream:
+            private_metadata(os.fstat(stream.fileno())); data = stream.read(MAX_RECORD+1)
+        if len(data)>MAX_RECORD: raise CompatibilityError('Synthetic fixture exceeds its size limit.')
+        self.current = json.loads(data)
+        from netpulse.router.preparation import inspect_progress
+        inspect_progress(record,self.current)
+
+    @contextmanager
+    def transaction(self): yield
+
+    def snapshot(self): return deepcopy(self.current)
+
+    def delete_preparation_object(self,index,receipt):
+        from netpulse.router.preparation import COLLECTIONS
+        key = COLLECTIONS[index]
+        matches = [i for i,row in enumerate(self.current[key]) if row == receipt]
+        if len(matches)!=1: raise CompatibilityError('Synthetic receipt changed.')
+        self.current[key].pop(matches[0])
+        temp = self.path.with_name('.rehearsal-state-new')
+        fd = os.open(temp,os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_NOFOLLOW',0),0o600)
+        try:
+            with os.fdopen(fd,'w') as stream:
+                json.dump(self.current,stream);stream.flush();os.fsync(stream.fileno())
+            os.replace(temp,self.path)
+        finally: temp.unlink(missing_ok=True)
 
 
 def pid_alive(pid):
@@ -265,7 +320,10 @@ def main(argv=None):
         if service_active():
             subprocess.run(['systemctl', 'stop', 'netpulse'], check=True, timeout=30)
         if record['mode'] == 'rehearsal':
-            adapter = RehearsalAdapter(record['plan']['before'])
+            if record['plan'].get('kind') == 'preparation':
+                adapter = RehearsalPreparationAdapter(record,journal.path.with_name('rehearsal-state.json'))
+            else:
+                adapter = RehearsalAdapter(record['plan']['before'])
         else:
             cfg = load('/etc/netpulse/config.toml')
             adapter = RouterTrialAdapter(cfg, protected_ips=record['plan']['before']['protected_ips'], ready=lambda: False)
