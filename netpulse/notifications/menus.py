@@ -30,6 +30,16 @@ class ControlMenus:
                     "Every connectivity change needs your review and confirmation. "
                     "Unavailable actions explain what needs setup.")
             row(("📱 Devices", "devices"), ("👥 Groups", "groups"))
+            row(("⏸ Saved pauses", "paused"))
+            try:
+                status = self.bot.handlers.get("quick_control_status", lambda: {})()
+                for action in status.get("actions", []):
+                    if not action.get("enabled", True):
+                        label = str(action.get("label") or action.get("id") or "Action")[:72]
+                        reason = " ".join(str(action.get("reason") or "not ready").split())[:180]
+                        text += f"\n• {label} unavailable: {reason}"
+            except Exception:
+                text += "\nCurrent control readiness is unavailable. Choose a device to check again."
         elif page == "alerts" and owner:
             text = ("🔔 Alert controls\n\nMute holds non-critical alerts for one hour. "
                     "WAN down and recovery alerts still come through.")
@@ -40,6 +50,18 @@ class ControlMenus:
             row(("📈 Last 24 hours", "today"), ("📊 Last 7 days", "week"))
             if owner:
                 row(("⚡ Run Pi test…", "test"))
+        elif page == "help":
+            text = ("❔ Button guide\n\n"
+                    "Devices or Groups → tap targets → Choose action → review → Confirm.\n"
+                    "Prefer WAN 1/2 selects a preferred connection with failover; Auto clears the preference.\n"
+                    "Pause asks for a duration; Resume reviews removal of the saved pause. "
+                    "Pause affects IPv4 only. Availability depends on validated firmware and setup.\n"
+                    "Create/Rename group offers name buttons; custom names are optional.\n"
+                    "Back returns one step. Cancel or Main menu ends the current review. "
+                    "If a picker expires, open Devices or Groups again.")
+            if owner:
+                row(("📱 Devices", "devices"), ("👥 Groups", "groups"))
+            row(("📈 Reports & diagnostics", "reports"))
         elif page == "test" and owner:
             nonce = secrets.token_urlsafe(9)
             self.pending[chat] = (nonce, self.clock() + 120)
@@ -86,13 +108,13 @@ class ControlMenus:
             self.bot._handle({"chat": obj, "from": cb["from"], "text": "/speed"})
             return True
         self.clear(chat)
-        if action in {"home", "controls", "reports", "alerts", "test"}:
+        if action in {"home", "controls", "reports", "alerts", "test", "help"}:
             if action in {"controls", "alerts", "test"} and not owner:
                 self.bot.send("Only the owner can do that.", chat=chat)
             else:
                 self.show(action, chat, owner)
-        elif action in {"status", "speeds", "pi", "today", "week", "help", "devices", "groups", "mute", "unmute"}:
-            if action in {"devices", "groups", "mute", "unmute"} and not owner:
+        elif action in {"status", "speeds", "pi", "today", "week", "devices", "groups", "paused", "mute", "unmute"}:
+            if action in {"devices", "groups", "paused", "mute", "unmute"} and not owner:
                 self.bot.send("Only the owner can do that.", chat=chat)
             else:
                 self.bot._handle({"chat": obj, "from": cb["from"], "text": "/" + action})

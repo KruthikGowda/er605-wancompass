@@ -48,7 +48,7 @@ class MenuTests(unittest.TestCase):
         self.assertEqual(self.runs, [])
 
     def test_private_owner_only_mutations_reject_members_forwarded_and_group_callbacks(self):
-        for action in ("test", "mute", "devices", "groups", "controls", "alerts"):
+        for action in ("test", "mute", "devices", "groups", "paused", "controls", "alerts"):
             self.tap(action, chat=77)
             self.assertEqual(self.out()[0], "Only the owner can do that.")
             self.tap(action, chat=42, sender=77)
@@ -56,6 +56,27 @@ class MenuTests(unittest.TestCase):
             self.tap(action, chat=999)
             self.assertTrue(self.bot._outbox.empty())
         self.assertEqual(self.runs, [])
+
+    def test_controls_explain_locks_and_help_uses_buttons_instead_of_command_instructions(self):
+        self.bot.handlers["quick_control_status"] = lambda: {"actions": [
+            {"id": "pause", "label": "Pause", "enabled": False, "reason": "Firmware not validated"}]}
+        self.tap("controls")
+        text, _, markup = self.out()
+        self.assertIn("Pause unavailable: Firmware not validated", text)
+        self.assertIn("menu:paused", str(markup))
+        self.tap("help")
+        text, _, markup = self.out()
+        self.assertIn("Button guide", text)
+        self.assertNotIn("/pause", text)
+        self.assertIn("menu:devices", str(markup))
+
+    def test_every_report_and_alert_button_reaches_its_handler(self):
+        called = []
+        for action in ("status", "speeds", "pi", "today", "week", "mute", "unmute", "paused"):
+            self.bot.handlers[action] = lambda key=action: called.append(key) or key
+            self.tap(action)
+            self.assertEqual(self.out()[0], action)
+        self.assertEqual(called, ["status", "speeds", "pi", "today", "week", "mute", "unmute", "paused"])
 
     def test_test_confirmation_is_one_use_expiring_and_invalidated_by_navigation(self):
         self.bot._menus.clock = lambda: 100

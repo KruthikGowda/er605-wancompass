@@ -30,7 +30,9 @@ The setup helper removes any webhook and consumes earlier pending updates to est
 
 Open the private bot chat and tap **Start** (or **Main menu**). The persistent keyboard and inline panel provide status, saved speed results, device/group controls, reports, and alert settings. Existing slash commands continue to work. `/menu` reopens the panel if Telegram hides the keyboard.
 
-For a connectivity change: **Devices** or **Groups** → tap targets → **Choose action** → choose the action → review → **Confirm**. Pause also asks for a duration. Cancel and navigation invalidate the previous selection/review. No device address or confirmation token needs to be typed. Creating or renaming a custom group still accepts a typed name. Unavailable controls remain subject to the installation's existing setup, firmware, and authorization checks.
+For a connectivity change: **Devices** or **Groups** → tap targets → **Choose action** → choose the action → review → **Confirm**. Pause also asks for a duration. Cancel and navigation invalidate the previous selection/review. No device address or confirmation token needs to be typed. Create/Rename group offers unused preset name buttons; typing a custom name is optional. Main menu and other keyboard navigation also work while choosing a name.
+
+**Internet controls** shows current unavailable-action reasons and **Saved pauses** lists saved pause intents. Disabled controls cannot be applied through callbacks. Pause/resume and strict **Only WAN** currently require the explicitly validated ER605 2.3.3 firmware; installing newer firmware does not extend that validation. **Prefer WAN** is distinct from strict Only mode. Button-flow tests with simulated writes establish UI behavior, not enforcement or failover on a real device.
 
 **Speed results** reads saved measurements, labels wired-PC Cloudflare, wired-PC Ookla, and Pi Cloudflare separately, and includes the measurement time. It starts no test. **Reports & diagnostics → Run Pi test…** requires a two-minute, single-use confirmation and retains data budgets/cooldowns. It runs on the Pi; it cannot establish full ISP line capacity or start a wired-PC test.
 

@@ -2254,7 +2254,7 @@ class Monitor:
                 state = "Paused" if record.get("status") == "paused" else (
                     f"Needs review · {record.get('status', 'unknown')}")
                 lines.append(f"• {name} · {state} · {expiry}")
-            lines.append("Review or resume a device: /resume <MAC or exact name>. Group controls are in /groups.")
+            lines.append("To resume: tap Devices, select the device, then Choose action → Resume → Confirm. Groups works the same way.")
             return "\n".join(lines)
 
         def group_pause(text="", chat=None):
@@ -2313,6 +2313,8 @@ class Monitor:
         return {
             "speeds": speed_results,
             "dashboard_url": lambda: self.cfg.telegram.dashboard_url,
+            "quick_control_status": lambda: self.action_control.state() if self.action_control else {
+                "actions": [], "enabled": False, "reason": "Router controls are not configured."},
             "speed": speed,
             "quick_choices": quick_choices,
             "quick_preview": quick_preview,

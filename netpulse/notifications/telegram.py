@@ -395,7 +395,7 @@ class TelegramBot(Notifier):
         sender = str((msg.get("from") or {}).get("id", ""))
         private_owner = (chat_obj.get("type") == "private" and chat in self.owners and
                          sender in self.owners and sender == chat)
-        if self._quick_picker and private_owner:
+        if self._quick_picker and private_owner and parse_command(text) is None:
             result = self._quick_picker.message(text, chat, sender)
             if result is not None:
                 self.send(result[0], chat=chat, markup=result[1])
