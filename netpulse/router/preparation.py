@@ -15,7 +15,7 @@ FORMS = (('dhcps', 'reservation'), ('ipgroup', 'ipscope_reservation'),
          ('ipgroup', 'ipgroup_reservation'), ('policy_route', 'policy_route'))
 
 
-def preparation_plan(before, approval):
+def preparation_plan(before, approval, *, pause_name=None):
     if (not isinstance(approval, dict) or set(approval) != {'confirmed','mac','ip','wan','note'}
             or approval['confirmed'] is not True or not isinstance(approval['note'], str)
             or not approval['note'].startswith('NetPulse: ') or len(approval['note']) > 64
@@ -72,15 +72,18 @@ def preparation_plan(before, approval):
     virtual = deepcopy(before)
     for key, obj in zip(COLLECTIONS, objects): virtual[key].append(deepcopy(obj))
     # Reuse exact firmware, identity, protection, unique-lease and scope checks.
-    build_plan(virtual, {'confirmed':True,'mac':mac,'ip':ip,'action':'pause','wan':approval['wan']},
-               acl_name='NP_TEST_P_' + '0' * 32)
-    return {'kind':'preparation', 'before':deepcopy(before), 'approval':deepcopy(approval), 'objects':objects}
+    child = build_plan(virtual, {'confirmed':True,'mac':mac,'ip':ip,'action':'pause','wan':approval['wan']},
+                       acl_name=pause_name if pause_name is not None else 'NP_TEST_P_' + '0' * 32)
+    plan = {'kind':'preparation', 'before':deepcopy(before), 'approval':deepcopy(approval), 'objects':objects}
+    if pause_name is not None: plan['pause'] = child['change']
+    return plan
 
 
 def validate_preparation(plan):
-    if not isinstance(plan, dict) or set(plan) != {'kind','before','approval','objects'} or plan['kind'] != 'preparation':
+    if not isinstance(plan, dict) or set(plan) not in ({'kind','before','approval','objects'},
+                                                    {'kind','before','approval','objects','pause'}) or plan['kind'] != 'preparation':
         raise CompatibilityError('Invalid preparation plan.')
-    if plan != preparation_plan(plan['before'], plan['approval']):
+    if plan != preparation_plan(plan['before'], plan['approval'],pause_name=plan.get('pause',{}).get('name')):
         raise CompatibilityError('Preparation objects differ from the exact reviewed plan.')
     return plan
 
@@ -113,6 +116,8 @@ def matches_object(index, observed, proposed):
             if str(actual).lower() not in {'on','1','true'}: return False
         elif key == 'bind':
             if str(actual).lower() not in {'0','false','off'}: return False
+        elif key == 'index':
+            if not str(actual).isdigit() or int(actual)!=value:return False
         elif actual != value: return False
     if any(type(observed[k]) not in (str,int) or len(str(observed[k])) > 128
            for k in set(observed) - set(proposed) - {'.anonymous'}): return False
@@ -159,12 +164,43 @@ def validate_progress(record):
     for i, row in enumerate(receipts):
         if not matches_object(i, row, plan['objects'][i]):
             raise CompatibilityError('An object receipt does not match the reviewed operation.')
+    if 'pause' in plan:
+        from netpulse.router.er605 import acl_pilot_effective_match
+        if type(record['pause_intent']) is not bool or (record['pause_intent'] and len(receipts)!=4):
+            raise CompatibilityError('Pause intent requires all four durable setup receipts.')
+        if record['pause_receipt'] is not None and (not record['pause_intent'] or
+                not acl_pilot_effective_match(record['pause_receipt'],plan['pause'])):
+            raise CompatibilityError('Pause receipt does not match the reviewed child operation.')
+        deadline=record['pause_deadline']
+        if record['pause_intent']:
+            import math
+            if (type(deadline) not in (int,float) or not math.isfinite(deadline)
+                    or not record['created'] <= deadline <= record['deadline']):
+                raise CompatibilityError('Invalid bounded pause deadline.')
+        elif deadline is not None:
+            raise CompatibilityError('Pause deadline appeared without write-ahead intent.')
+
+
+def pause_row(record,snapshot):
+    from netpulse.router.er605 import acl_pilot_effective_match
+    if 'pause' not in record['plan']: return None
+    expected = record['plan']['pause']
+    rows = [r for r in snapshot['acls'] if r.get('name')==expected['name']]
+    if not rows: return None
+    if len(rows)!=1 or not record['pause_intent'] or not acl_pilot_effective_match(rows[0],expected):
+        raise CompatibilityError('Child pause rule changed or was not attempted; retain recovery lock.')
+    receipt = record['pause_receipt']
+    if receipt is not None and not acl_pilot_effective_match(rows[0],receipt):
+        raise CompatibilityError('Child pause receipt identity/content changed.')
+    return rows[0]
 
 
 def inspect_progress(record, snapshot):
     """Return owned rows, refusing unknown edits before any deletion begins."""
     validate_progress(record)
     plan = record['plan']; stripped = deepcopy(snapshot); owned = []
+    child = pause_row(record,snapshot)
+    if child is not None: stripped['acls'].remove(child)
     if plan['approval']['mac'] in snapshot.get('preparation_blocked_macs',[]):
         raise CompatibilityError('A saved endpoint control intent changed during preparation.')
     if snapshot.get('lan') != plan['before']['lan'] or snapshot.get('lan_scopes') != plan['before']['lan_scopes']:
@@ -196,6 +232,15 @@ def restore_preparation(journal, record, adapter, current):
     from netpulse.router.trial import assert_identity
     assert_identity(current, record['plan'])
     owned = inspect_progress(record, current)
+    child = pause_row(record,current)
+    if child is not None:
+        if record['pause_receipt'] is None:
+            updated=deepcopy(record);updated['pause_receipt']=deepcopy(child)
+            journal.replace(updated,record);record=updated
+        adapter.delete_pause_rule(child)
+        current=adapter.snapshot();assert_identity(current,record['plan']);inspect_progress(record,current)
+        if pause_row(record,current) is not None:
+            raise CompatibilityError('Child pause removal was not verified before setup teardown.')
     # After a lost add acknowledgment, capture the exact recovered row and ID
     # durably before deleting it. Missing is already clean; never re-add it.
     index = record['inflight']
@@ -212,10 +257,12 @@ def restore_preparation(journal, record, adapter, current):
                 raise CompatibilityError('Preparation deletion was not verified.')
 
 
-def run_preparation(plan, journal, adapter, watchdog, *, seconds=180):
-    """Create all four prerequisites and always tear down; no live probe hook."""
+def run_preparation(plan, journal, adapter, watchdog, *, seconds=180, probe=None):
+    """Create prerequisites, optionally observe a reviewed pause, and always tear down."""
     from netpulse.router.trial import assert_identity, recover, assert_collections
     validate_preparation(plan)
+    if 'pause' in plan and probe is None:
+        raise CompatibilityError('A bounded endpoint probe is required for the reviewed pause child.')
     if type(seconds) is not int or not 1 <= seconds <= 600:
         raise CompatibilityError('Preparation transaction must be bounded to 1–600 seconds.')
     active = adapter.monitor_active(); record = journal.arm(plan,seconds,restart_service=active)
@@ -254,6 +301,39 @@ def run_preparation(plan, journal, adapter, watchdog, *, seconds=180):
                     if owned[i] is None: raise CompatibilityError('Preparation add was not read back.')
                     updated = deepcopy(record); updated['receipts'].append(deepcopy(owned[i]))
                     journal.replace(updated,record); record = updated
+        if 'pause' in plan:
+            baseline = probe.prepared()
+            if baseline.get('internet_ipv4_ok') is not True or baseline.get('lan_ok') is not True or baseline.get('wan1_verified') is not True:
+                raise CompatibilityError('Endpoint WAN1 baseline failed; no pause rule was added.')
+            with journal.locked():
+                if journal.read()!=record or journal.due(record,lambda pid:True):
+                    raise CompatibilityError('Combined operation expired before pause.')
+                with adapter.transaction():
+                    current=adapter.snapshot();assert_identity(current,plan);inspect_progress(record,current)
+                    updated=deepcopy(record);updated['pause_intent']=True
+                    updated['pause_deadline']=min(journal.clock()+60,record['deadline'])
+                    journal.replace(updated,record);record=updated
+                    adapter.create_pause_rule(deepcopy(plan['pause']))
+                    current=adapter.snapshot();assert_identity(current,plan);inspect_progress(record,current)
+                    row=pause_row(record,current)
+                    if row is None: raise CompatibilityError('Pause add was not read back.')
+                    updated=deepcopy(record);updated['pause_receipt']=deepcopy(row)
+                    journal.replace(updated,record);record=updated
+            blocked=probe.blocked()
+            if blocked.get('internet_ipv4_ok') is not False or blocked.get('lan_ok') is not True:
+                raise CompatibilityError('Endpoint IPv4 block/LAN heartbeat observation failed.')
+            with journal.locked():
+                if journal.read()!=record: raise CompatibilityError('Recovery already started.')
+                with adapter.transaction():
+                    current=adapter.snapshot();assert_identity(current,plan);inspect_progress(record,current)
+                    row=pause_row(record,current)
+                    if row is None: raise CompatibilityError('Pause disappeared before explicit resume.')
+                    adapter.delete_pause_rule(row)
+                    current=adapter.snapshot();assert_identity(current,plan);inspect_progress(record,current)
+                    if pause_row(record,current) is not None: raise CompatibilityError('Resume was not read back.')
+            recovered=probe.resumed()
+            if recovered.get('internet_ipv4_ok') is not True or recovered.get('lan_ok') is not True:
+                raise CompatibilityError('Endpoint resume did not recover IPv4/LAN.')
     finally:
         try: recover(journal,adapter,expected_nonce=record['nonce'],after_restore=resume if active else None)
         finally:

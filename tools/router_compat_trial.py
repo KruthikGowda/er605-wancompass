@@ -21,7 +21,7 @@ from netpulse.router.compatibility import CompatibilityError, CANDIDATE_FIRMWARE
 from netpulse.router.control import _balance_enabled
 from netpulse.router.er605 import ER605Client, acl_pilot_effective_match
 from netpulse.router.trial import (TrialJournal, boottime, private_metadata, recover,
-                                   rows_equal, MAX_RECORD)
+                                   rows_equal, MAX_RECORD,validate_watch_progress)
 from netpulse.router.trial_lock import TRIAL_JOURNAL, TRIAL_PENDING
 from netpulse.storage.sqlite import KeyValueFile
 
@@ -141,6 +141,12 @@ class RouterTrialAdapter:
         from netpulse.router.preparation import FORMS
         self.client.delete_exact_preparation_row(*FORMS[index],receipt)
 
+    def create_pause_rule(self,row):
+        self.client.add_acl_pilot_rule(self.client.read_acl_pilot_rows(),row)
+
+    def delete_pause_rule(self,row):
+        self.client.delete_acl_pilot_rule(row['name'],row)
+
     def restore(self, plan, current):
         if plan['approval']['action'] == 'pause':
             matches = [r for r in current['acls'] if r.get('name') == plan['change']['name']]
@@ -231,12 +237,20 @@ class RehearsalPreparationAdapter:
 
     def snapshot(self): return deepcopy(self.current)
 
+    def delete_pause_rule(self,row):
+        matches=[i for i,r in enumerate(self.current['acls']) if r==row]
+        if len(matches)!=1:raise CompatibilityError('Synthetic child pause changed.')
+        self.current['acls'].pop(matches[0]);self._persist()
+
     def delete_preparation_object(self,index,receipt):
         from netpulse.router.preparation import COLLECTIONS
         key = COLLECTIONS[index]
         matches = [i for i,row in enumerate(self.current[key]) if row == receipt]
         if len(matches)!=1: raise CompatibilityError('Synthetic receipt changed.')
         self.current[key].pop(matches[0])
+        self._persist()
+
+    def _persist(self):
         temp = self.path.with_name('.rehearsal-state-new')
         fd = os.open(temp,os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_NOFOLLOW',0),0o600)
         try:
@@ -276,8 +290,8 @@ def watch(journal, *, sleep=time.sleep, alive=pid_alive):
             if journal.marker.exists():
                 raise CompatibilityError('Orphan trial marker requires manual review.')
             return False
-        if current != record:
-            raise CompatibilityError('Watchdog journal identity changed.')
+        validate_watch_progress(record,current)
+        record=current
         sleep(min(1, max(.01, record['deadline'] - journal.clock())))
     return True
 

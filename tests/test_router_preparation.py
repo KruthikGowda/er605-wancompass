@@ -273,3 +273,76 @@ class PreparationTests(unittest.TestCase):
     def test_unreadable_existing_route_priority_prevents_preparation_plan(self):
         self.before['routes'].append({'name':'OWNER_ROUTE','index':'not-an-index'})
         with self.assertRaises(CompatibilityError):preparation_plan(self.before,review())
+
+    def pause_bundle(self):
+        self.plan=preparation_plan(self.before,review(),pause_name='NP_TEST_P_'+'B'*32)
+        parent=self
+        class WithPause(MemoryPreparation):
+            fail_pause_ack=False
+            def create_pause_rule(inner,row):
+                saved=parent.journal.read()
+                assert saved['pause_intent'] and saved['pause_deadline']<=parent.now+60
+                inner.current['acls'].append(deepcopy(row))
+                if inner.fail_pause_ack:raise TimeoutError('synthetic lost child add acknowledgment')
+            def delete_pause_rule(inner,row):
+                assert parent.journal.read()['pause_receipt'] is not None
+                inner.current['acls'].remove(row);inner.deleted.append('pause')
+        self.adapter=WithPause(self.before,self.journal)
+        return SimpleNamespace(prepared=lambda:{'internet_ipv4_ok':True,'lan_ok':True,'wan1_verified':True},
+                               blocked=lambda:{'internet_ipv4_ok':False,'lan_ok':True},
+                               resumed=lambda:{'internet_ipv4_ok':True,'lan_ok':True})
+
+    def test_combined_pause_uses_one_journal_and_removes_acl_before_setup(self):
+        probe=self.pause_bundle()
+        run_preparation(self.plan,self.journal,self.adapter,self.watchdog,probe=probe)
+        self.assertEqual(self.adapter.deleted,['pause',3,2,1,0])
+        self.assertEqual(self.adapter.current,self.before)
+        self.assertFalse(self.journal.marker.exists())
+
+    def test_failed_baseline_never_adds_acl_and_rolls_back_setup(self):
+        probe=self.pause_bundle();probe.prepared=lambda:{'internet_ipv4_ok':True,'lan_ok':True,'wan1_verified':False}
+        with self.assertRaisesRegex(CompatibilityError,'WAN1 baseline'):
+            run_preparation(self.plan,self.journal,self.adapter,self.watchdog,probe=probe)
+        self.assertEqual(self.adapter.deleted,[3,2,1,0])
+        self.assertEqual(self.adapter.current,self.before)
+
+    def test_lost_child_add_ack_and_failed_block_observation_restore_everything(self):
+        for lost in (True,False):
+            probe=self.pause_bundle();self.adapter.fail_pause_ack=lost
+            if not lost:probe.blocked=lambda:{'internet_ipv4_ok':True,'lan_ok':True}
+            with self.assertRaises((TimeoutError,CompatibilityError)):
+                run_preparation(self.plan,self.journal,self.adapter,self.watchdog,probe=probe)
+            self.assertEqual(self.adapter.deleted,['pause',3,2,1,0])
+            self.assertEqual(self.adapter.current,self.before)
+
+    def test_watcher_follows_durable_setup_progress_and_child_deadline(self):
+        from tools.router_compat_trial import watch
+        probe=self.pause_bundle()
+        record=self.journal.arm(self.plan,180,mode='rehearsal')
+        def advance(seconds):
+            self.now+=seconds
+            old=self.journal.read();n=len(old['receipts'])
+            if n<4:
+                new=deepcopy(old);new['inflight']=n
+                with self.journal.locked():self.journal.replace(new,old)
+                row={**self.plan['objects'][n],'id':str(100+n)}
+                newer=deepcopy(new);newer['receipts'].append(row)
+                with self.journal.locked():self.journal.replace(newer,new)
+            elif not old['pause_intent']:
+                new=deepcopy(old);new.update(pause_intent=True,pause_deadline=self.now+3)
+                with self.journal.locked():self.journal.replace(new,old)
+        self.assertTrue(watch(self.journal,sleep=advance,alive=lambda pid:True))
+        self.assertLess(self.now,120)
+
+    def test_child_deadline_cannot_be_extended(self):
+        self.pause_bundle();record=self.journal.arm(self.plan,180)
+        for i,obj in enumerate(self.plan['objects']):
+            new=deepcopy(record);new['inflight']=i
+            with self.journal.locked():self.journal.replace(new,record)
+            record=new;new=deepcopy(record);new['receipts'].append({**obj,'id':str(100+i)})
+            with self.journal.locked():self.journal.replace(new,record)
+            record=new
+        new=deepcopy(record);new.update(pause_intent=True,pause_deadline=self.now+60)
+        with self.journal.locked():self.journal.replace(new,record)
+        changed=deepcopy(new);changed['pause_deadline']+=1
+        with self.journal.locked(),self.assertRaises(CompatibilityError):self.journal.replace(changed,new)

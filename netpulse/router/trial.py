@@ -91,6 +91,7 @@ class TrialJournal:
                   'restart_service': restart_service, 'plan': deepcopy(plan)}
         if preparation:
             record.update(version=2,receipts=[],inflight=None)
+            if 'pause' in plan:record.update(pause_intent=False,pause_receipt=None,pause_deadline=None)
         self._validate(record)
         payload = json.dumps(record, allow_nan=False).encode()
         if len(payload) > MAX_RECORD:
@@ -112,6 +113,7 @@ class TrialJournal:
         keys = {'version', 'mode', 'nonce', 'boot', 'created', 'deadline', 'owner_pid', 'restart_service', 'plan'}
         preparation = isinstance(record,dict) and isinstance(record.get('plan'),dict) and record['plan'].get('kind') == 'preparation'
         if preparation: keys.update({'receipts','inflight'})
+        if preparation and 'pause' in record['plan']:keys.update({'pause_intent','pause_receipt','pause_deadline'})
         if not isinstance(record, dict) or set(record) != keys or type(record['version']) is not int or record['version'] != (2 if preparation else 1):
             raise CompatibilityError("Unrecognized trial journal format.")
         if record['mode'] not in {'live', 'rehearsal'}:
@@ -136,7 +138,7 @@ class TrialJournal:
         self._validate(updated)
         if self.read() != expected or expected['version'] != 2 or updated['version'] != 2:
             raise CompatibilityError('Preparation generation changed during journal update.')
-        mutable = {'receipts','inflight'}
+        mutable = {'receipts','inflight','pause_intent','pause_receipt','pause_deadline'}
         if any(updated[k] != expected[k] for k in expected if k not in mutable):
             raise CompatibilityError('Immutable preparation approval/deadline changed.')
         old, new = expected['receipts'], updated['receipts']
@@ -145,6 +147,13 @@ class TrialJournal:
         previous = expected['inflight']
         if previous is not None and (updated['inflight'] is None or not previous <= updated['inflight'] <= previous+1):
             raise CompatibilityError('Preparation intent cannot move backward or skip writes.')
+        if 'pause' in expected['plan']:
+            if expected['pause_intent'] and not updated['pause_intent']:
+                raise CompatibilityError('Pause write-ahead intent cannot be cleared.')
+            if expected['pause_receipt'] is not None and updated['pause_receipt']!=expected['pause_receipt']:
+                raise CompatibilityError('Pause receipt cannot be replaced.')
+            if expected['pause_deadline'] is not None and updated['pause_deadline']!=expected['pause_deadline']:
+                raise CompatibilityError('Pause deadline cannot be extended or replaced.')
         payload = json.dumps(updated,allow_nan=False).encode()
         if len(payload)>MAX_RECORD: raise CompatibilityError('Preparation journal exceeds its size limit.')
         temp = self.path.with_name('.journal-update-'+str(uuid.uuid4()))
@@ -214,8 +223,26 @@ class TrialJournal:
     def due(self, record, pid_alive):
         # Changed boot or clock rollback forces recovery; wall-clock changes are irrelevant.
         now = self.clock()
-        return (self.boot() != record['boot'] or now < record['created'] or now >= record['deadline']
+        deadline=min(record['deadline'],record.get('pause_deadline') or record['deadline'])
+        return (self.boot() != record['boot'] or now < record['created'] or now >= deadline
                 or not pid_alive(record['owner_pid']))
+
+
+def validate_watch_progress(previous,current):
+    """A watcher may miss intermediate durable updates, but never a generation change."""
+    mutable={'receipts','inflight','pause_intent','pause_receipt','pause_deadline'}
+    if any(previous.get(k)!=current.get(k) for k in set(previous)|set(current) if k not in mutable):
+        raise CompatibilityError('Watchdog journal identity/approval changed.')
+    old,new=previous.get('receipts',[]),current.get('receipts',[])
+    if len(new)<len(old) or new[:len(old)]!=old:
+        raise CompatibilityError('Watchdog receipts moved backward or changed.')
+    if previous.get('inflight') is not None and (current.get('inflight') is None or current['inflight']<previous['inflight']):
+        raise CompatibilityError('Watchdog write intent moved backward.')
+    for key in ('pause_receipt','pause_deadline'):
+        if previous.get(key) is not None and previous[key]!=current.get(key):
+            raise CompatibilityError('Watchdog child receipt/deadline changed.')
+    if previous.get('pause_intent') and not current.get('pause_intent'):
+        raise CompatibilityError('Watchdog child intent was cleared.')
 
 
 def rows_equal(a, b):
