@@ -66,6 +66,8 @@ Backups default to disabled. Configure `directory` and, for mounted storage, `mo
 
 ### `[telegram]`
 
+Optional `dashboard_url` adds an Open dashboard button to Telegram panels. Use the existing LAN/VPN HTTP(S) address without credentials, query parameters, or fragments. Authentication and network reachability remain required; this setting does not publish the dashboard.
+
 `enabled`, `bot_token`, and `chat_id` enable the optional bot. Store real tokens only in the protected local configuration. `quiet_start`/`quiet_end` delay non-critical alerts; `digest_time` and `weekly_report_time` opt into daily/weekly reports. `device_activity_notifications` defaults to `false`; enabling it can disclose client activity to the configured chat. Telegram API acceptance does not prove the recipient saw a message.
 
 ## Ownership and opt-ins

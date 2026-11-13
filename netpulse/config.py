@@ -7,6 +7,7 @@ import math
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+from urllib.parse import urlsplit
 from netpulse.devices.identity import normalize_mac
 
 
@@ -71,6 +72,7 @@ class TelegramConfig:
     enabled: bool = False
     bot_token: str = ""
     chat_id: str = ""
+    dashboard_url: str = ""  # optional owner-configured LAN/VPN URL; never embeds login credentials
     quiet_start: str = "23:00"   # non-critical alerts are held back between these times
     quiet_end: str = "07:00"
     digest_time: str = ""        # daily summary; "" disables it
@@ -248,6 +250,12 @@ def _validate(cfg: Config) -> None:
         raise ValueError("router.traffic_usage_enabled must be true or false")
     if cfg.web.host not in ("127.0.0.1", "::1", "localhost") and not cfg.web.auth_file.strip():
         raise ValueError("web.auth_file is required when the dashboard listens beyond loopback")
+    if cfg.telegram.dashboard_url:
+        url = urlsplit(cfg.telegram.dashboard_url)
+        if (url.scheme not in {"http", "https"} or not url.hostname or url.username is not None
+                or url.password is not None or url.query or url.fragment
+                or any(c.isspace() or ord(c) < 32 for c in cfg.telegram.dashboard_url)):
+            raise ValueError("telegram.dashboard_url must be an HTTP(S) URL without credentials, query or fragment")
     if cfg.preferred_wan and cfg.preferred_wan not in names:
         raise ValueError(f"preferred_wan {cfg.preferred_wan!r} is not a configured WAN")
     if len(cfg.probe.targets) < 2:

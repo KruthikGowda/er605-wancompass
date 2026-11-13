@@ -490,11 +490,12 @@ class TelegramMoreMenu(unittest.TestCase):
         bot.send = lambda text, chat=None, markup=None: sent.append((text, markup))
         msg = {"chat": {"id": 42, "type": "private"}, "from": {"id": 42}}
         bot._handle({**msg, "text": "❔ Help / More"})
-        self.assertIn("Reports, tools", sent[-1][0])
-        self.assertEqual(sent[-1][1], MORE_KEYBOARD)
+        self.assertIn("Reports & diagnostics", sent[-1][0])
+        self.assertIn("menu:test", str(sent[-1][1]))
         bot._handle({**msg, "text": "🏠 Main menu"})
-        self.assertIn("Choose Status, Devices, Groups", sent[-1][0])
-        self.assertEqual(sent[-1][1], KEYBOARD)
+        self.assertIn("No commands", sent[-1][0])
+        self.assertEqual(sent[-2][1], KEYBOARD)
+        self.assertIn("menu:devices", str(sent[-1][1]))
         bot._handle({**msg, "text": "/help"})
         self.assertEqual(sent[-1][0], "full advanced help")
 
@@ -523,7 +524,8 @@ class TelegramMoreMenu(unittest.TestCase):
 
         bot._handle({"chat": {"id": 77, "type": "private"}, "from": {"id": 77},
                      "text": "❔ Help / More"})
-        self.assertEqual(sent[-1][2], MORE_KEYBOARD)
+        self.assertIn("menu:speeds", str(sent[-1][2]))
+        self.assertNotIn("menu:test", str(sent[-1][2]))
         bot._handle({"chat": {"id": 77, "type": "private"}, "from": {"id": 77},
                      "text": "📱 Devices"})
         self.assertEqual(sent[-1][0], "Only the owner can do that.")

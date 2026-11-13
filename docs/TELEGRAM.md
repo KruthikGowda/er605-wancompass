@@ -26,6 +26,16 @@ Telegram is optional. WANCompass works without it. Keep `[telegram].enabled = fa
 
 The setup helper removes any webhook and consumes earlier pending updates to establish a clean polling offset. This is appropriate for a newly created bot. Do not use a bot already connected to another application: setup can remove that webhook and consume its updates.
 
+## Button controls
+
+Open the private bot chat and tap **Start** (or **Main menu**). The persistent keyboard and inline panel provide status, saved speed results, device/group controls, reports, and alert settings. Existing slash commands continue to work. `/menu` reopens the panel if Telegram hides the keyboard.
+
+For a connectivity change: **Devices** or **Groups** → tap targets → **Choose action** → choose the action → review → **Confirm**. Pause also asks for a duration. Cancel and navigation invalidate the previous selection/review. No device address or confirmation token needs to be typed. Creating or renaming a custom group still accepts a typed name. Unavailable controls remain subject to the installation's existing setup, firmware, and authorization checks.
+
+**Speed results** reads saved measurements, labels wired-PC Cloudflare, wired-PC Ookla, and Pi Cloudflare separately, and includes the measurement time. It starts no test. **Reports & diagnostics → Run Pi test…** requires a two-minute, single-use confirmation and retains data budgets/cooldowns. It runs on the Pi; it cannot establish full ISP line capacity or start a wired-PC test.
+
+Set optional `[telegram].dashboard_url` to the dashboard's existing LAN/VPN HTTP(S) address to add **Open dashboard** to panels. Do not embed credentials, tokens, queries, or fragments. The link does not expose the service publicly or bypass its login; access from outside the home still needs the existing VPN/network path. Members receive read-only menu choices; owner control callbacks require the owner's own private chat.
+
 ## Settings and privacy
 
 - Keep `/etc/netpulse/config.toml` root-owned and readable only by the service group (normally mode `0640`).

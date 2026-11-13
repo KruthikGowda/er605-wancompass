@@ -107,6 +107,7 @@ interval_days = 7
 keep = 8
 
 [telegram]
+# dashboard_url = "http://192.0.2.10:8080/"  # optional existing LAN/VPN dashboard; no login credentials
 # Easiest setup: sudo python3 -m tools.telegram_setup  (fills these in for you)
 enabled = false
 bot_token = ""

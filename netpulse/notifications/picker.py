@@ -320,7 +320,7 @@ class QuickPicker:
         if not session.choices:
             lines.append("No matching choices are available.")
         else:
-            lines.append("Tap to select, or reply with numbers such as 1 or 1,2.")
+            lines.append("Tap to select, then tap Choose action (or Review changes). Tap again to unselect.")
         if session.selected:
             lines.append("Selected: " + ", ".join(str(i + 1) for i in session.selected))
         for local, choice in enumerate(session.choices[session.page * PAGE_SIZE:(session.page + 1) * PAGE_SIZE], 1):
@@ -335,7 +335,7 @@ class QuickPicker:
                 count = choice.get("count")
                 label = f"{marker}{local}. {name}" + (f" · {count} devices" if isinstance(count, int) else "")
             lines.append(label)
-        lines.append("Send /cancel to stop.")
+        lines.append("Tap Cancel to stop without making changes.")
         if len(session.choices) == MAX_CHOICES:
             lines.append("Showing up to 512 entries.")
         return _bounded_text("\n".join(lines)), self._list_markup(session)

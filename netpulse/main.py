@@ -1338,6 +1338,35 @@ class Monitor:
             return ("🛠 Router checks paused for 30 min, so you can use the Omada web page without "
                     "being logged out. Internet monitoring and alerts continue as normal.")
 
+        def speed_results():
+            now = self.clock()
+            rows = sqlite.speedtests(self.cfg.db_path, int(now - 30 * 86400), int(now) + 1)
+            latest = {}
+            for row in rows:
+                source = row.get("trigger") if row.get("trigger") in {"wired_pc", "wired_pc_ookla"} else "pi"
+                latest[(row["wan"], source)] = row
+            lines = ["📊 Saved speed results · last 30 days", "No new test was started."]
+            sources = {"pi": "Pi · Cloudflare (Pi-limited)", "wired_pc": "Wired PC · Cloudflare",
+                       "wired_pc_ookla": "Wired PC · Ookla"}
+            for wan in self.cfg.wans:
+                lines.append("\n" + (wan.label or wan.name))
+                found = False
+                for source, label in sources.items():
+                    row = latest.get((wan.name, source))
+                    if not row:
+                        continue
+                    found = True
+                    stamp = time.strftime("%d %b %H:%M", time.localtime(row["ts"]))
+                    if row.get("error"):
+                        lines.append(f"• {label}: latest attempt failed ({stamp}); open dashboard for details.")
+                    else:
+                        down, up = row.get("down_mbps"), row.get("up_mbps")
+                        fmt = lambda value: f"{value:.1f}" if isinstance(value, (int, float)) else "unavailable"
+                        lines.append(f"• {label}: ↓ {fmt(down)} / ↑ {fmt(up)} Mbps · {stamp}")
+                if not found:
+                    lines.append("No saved measurement in the last 30 days.")
+            return "\n".join(lines)
+
         def speed(chat=None):
             bot = self.alerter.notifier
             why = self.start_speedtest(
@@ -2282,6 +2311,8 @@ class Monitor:
         pause_confirm.wants_text = True
 
         return {
+            "speeds": speed_results,
+            "dashboard_url": lambda: self.cfg.telegram.dashboard_url,
             "speed": speed,
             "quick_choices": quick_choices,
             "quick_preview": quick_preview,
@@ -2488,7 +2519,7 @@ async def run_async(cfg: Config) -> None:
     })
     web.start(cfg.web.host, cfg.web.port, board, cfg.db_path, cfg.web.auth_file)
     if bot:
-        bot.handlers = mon.bot_handlers()
+        bot.set_handlers(mon.bot_handlers())
         bot.start()
 
     for w in cfg.wans:
