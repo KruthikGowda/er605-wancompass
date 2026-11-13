@@ -328,3 +328,58 @@ routing state were restored; the recovery guard verified cleanup before monitori
 resumed. Permanent DPI enablement was not performed. The dashboard's new
 qualification logic remains useful while capture is off and avoids presenting
 legacy undercounted observations as complete device usage.
+
+### ER605 v2.30 firmware 2.4.10 compatibility
+
+An owner-approved configuration-preserving upgrade from 2.3.3 Build 20251029
+Rel.18054 to **2.4.10 Build 20260916 Rel.63334** completed after exporting the
+router configuration and saving the official image and physical-recovery
+instructions offline. The downloaded image matched the official v2.30 support
+list. A configuration backup does not guarantee firmware downgrade or recovery;
+the vendor's recovery mode requires a person at the router.
+
+Authenticated before/after reads preserved policy routes, DHCP reservations,
+balancing settings and LAN address/pool values. The new API adds `uniq_id` to
+IP groups and migrates `dhcps/lan` from `ipaddr_start`/`ipaddr_end` to
+`ipRangePool: [{"start": "...", "end": "..."}]`, adding
+`allowInternetAccess`. Reservation previews and fresh apply-time checks support
+the verified single-pool format. Mixed schemas, multiple pools, missing fields,
+non-IPv4 ranges and invalid bounds remain rejected. Existing firmware review,
+preview, explicit confirmation and exact reservation read-back remain required.
+Strict `Only` WAN routing remains unavailable.
+
+The native WAN and `ipstats/list` counter schemas remain available. Firmware
+installation alone does not establish complete per-device accounting or safe
+DPI throughput. Those require a separate source/egress-verified comparison.
+
+The subsequent gigabit-wired PC retest completed 24 valid, egress-verified
+measurements with 7.68 GB of transfer payload, retaining the previous acceptance
+criteria. Each cell below is the mean of two measurements, download/upload Mbps:
+
+| WAN | DPI off before | DPI on | DPI off after |
+| --- | --- | --- | --- |
+| WAN1 | 456.5 / 676.2 | 352.0 / 435.7 | 454.4 / 502.4 |
+| WAN2 | 214.0 / 201.6 | 210.0 / 205.6 | 210.0 / 203.0 |
+
+WAN1 did not pass: its final download repetitions varied by more than 25%,
+upload baselines drifted by more than 20%, and DPI-on results were lower. This
+does not isolate a precise DPI penalty or establish the ISP's maximum capacity.
+WAN2 showed little difference. The new firmware still substantially undercounted
+per-device traffic with DPI/logging off; with both on, counters registered
+gigabytes, including traffic beyond the known payload. That is evidence of
+capture activity, not proof of complete or billing-accurate device accounting.
+
+Changing DPI returned a lost acknowledgement followed by temporary error `1015`.
+The new native UI treats this as configuration applying and polls the firmware
+read until ready. The operator helper was updated to wait for a bounded exact
+state read-back without repeating the setting write. The first attempt's recovery
+restored the original state before the resumed comparison; its valid baseline
+measurements and payload spending were retained.
+
+The final acceptance failed. DPI/logging were read back off; all temporary PC
+DHCP, policy, group and scope objects were removed, the previous saved route was
+restored, and monitoring resumed. The dashboard continues to expose native WAN
+rates and daily WAN totals while withholding unqualified current device usage.
+
+References: [official firmware](https://support.omadanetworks.com/en/download/firmware/er605/v2.30/)
+and [physical recovery procedure](https://support.omadanetworks.com/us/document/13056/).

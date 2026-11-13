@@ -586,6 +586,37 @@ class ReservationControlApply(unittest.TestCase):
         self.assertEqual(self.client.writes, [])
         self.assertEqual(self.client.forms[("dhcps", "reservation")], [])
 
+    def test_2410_single_pool_is_validated_again_at_apply(self):
+        pool = {"ipRangePool": [{"start": "192.168.0.100", "end": "192.168.0.199"}]}
+        self.router.snap.raw["dhcp_settings"] = deepcopy(pool)
+        self.client.forms[("dhcps", "lan")] = deepcopy(pool)
+        preview = self.control.preview_reservation(MAC, "Work laptop", "owner")
+        self.client.forms[("dhcps", "lan")]["ipRangePool"][0]["end"] = "192.168.0.140"
+        with self.assertRaisesRegex(ControlError, "outside the DHCP pool"):
+            self.control.apply_reservation(preview["token"])
+        self.assertEqual(self.client.writes, [])
+
+    def test_2410_single_pool_reservation_readback(self):
+        pool = {"ipRangePool": [{"start": "192.168.0.100", "end": "192.168.0.199"}]}
+        self.router.snap.raw["dhcp_settings"] = deepcopy(pool)
+        self.client.forms[("dhcps", "lan")] = deepcopy(pool)
+        preview = self.control.preview_reservation(MAC, "Work laptop", "owner")
+        self.assertTrue(self.control.apply_reservation(preview["token"])["applied"])
+
+    def test_2410_unknown_or_ambiguous_pools_fail_before_login(self):
+        valid = {"start": "192.168.0.100", "end": "192.168.0.199"}
+        for value in (None, {}, [], [valid, valid], [{"start": "192.168.0.100"}],
+                      [{**valid, "unknown": "value"}]):
+            with self.subTest(value=value):
+                self.router.snap.raw["dhcp_settings"] = {"ipRangePool": value}
+                with self.assertRaises(ControlError):
+                    self.control.preview_reservation(MAC, "Work laptop", "owner")
+        self.router.snap.raw["dhcp_settings"] = {"ipRangePool": [valid], "ipaddr_start": valid["start"]}
+        with self.assertRaises(ControlError):
+            self.control.preview_reservation(MAC, "Work laptop", "owner")
+        self.assertEqual(self.client.session_count, 0)
+        self.assertEqual(self.client.writes, [])
+
     def test_non_ipv4_router_scope_or_dhcp_pool_fails_closed_before_login(self):
         for field, value in (
                 ("lan_scopes", [{"name": "IP_LAN", "scope": "fd00::/64"}]),
