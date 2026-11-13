@@ -104,6 +104,25 @@ class PreparationTests(unittest.TestCase):
             with self.assertRaises(CompatibilityError):
                 preparation_plan(self.before, {**review(), 'oneplus_trial_confirmed': value})
 
+    def test_router_scope_list_mirrors_only_exact_owned_scope(self):
+        class Mirrored(MemoryPreparation):
+            def create_preparation_object(self, i, obj):
+                result = super().create_preparation_object(i, obj)
+                if i == 1: self.current['lan_scopes'].append(deepcopy(result))
+                return result
+            def delete_preparation_object(self, i, row):
+                super().delete_preparation_object(i, row)
+                if i == 1: self.current['lan_scopes'].remove(row)
+        adapter = Mirrored(self.before, self.journal)
+        run_preparation(self.plan, self.journal, adapter, self.watchdog)
+        self.assertEqual(adapter.current, self.before)
+        self.assertFalse(self.journal.path.exists())
+        record = self.seed(2)
+        state = self.adapter.snapshot()
+        state['lan_scopes'].append({**state['ipscopes'][0], 'comment': 'foreign edit'})
+        from netpulse.router.preparation import inspect_progress
+        with self.assertRaises(CompatibilityError): inspect_progress(record, state)
+
     def test_complete_transaction_tears_down_in_dependency_order(self):
         self.adapter.active = True
         result = self.run_plan()

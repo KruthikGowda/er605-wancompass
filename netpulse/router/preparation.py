@@ -208,7 +208,7 @@ def inspect_progress(record, snapshot):
     if child is not None: stripped['acls'].remove(child)
     if plan['approval']['mac'] in snapshot.get('preparation_blocked_macs',[]):
         raise CompatibilityError('A saved endpoint control intent changed during preparation.')
-    if snapshot.get('lan') != plan['before']['lan'] or snapshot.get('lan_scopes') != plan['before']['lan_scopes']:
+    if snapshot.get('lan') != plan['before']['lan']:
         raise CompatibilityError('LAN or DHCP pool changed; preparation recovery needs review.')
     for i, key in enumerate(COLLECTIONS):
         proposed = plan['objects'][i]
@@ -228,6 +228,13 @@ def inspect_progress(record, snapshot):
                 raise CompatibilityError('Generated object identity/content changed after its receipt.')
         owned.append(row)
         stripped[key] = [r for r in snapshot[key] if not identity(r)]
+    # 2.4.10 ipscope_list also includes the newly created exact owned scope.
+    # Remove at most that full, already validated row before checking LAN state.
+    scopes = deepcopy(snapshot.get('lan_scopes'))
+    if isinstance(scopes, list) and owned[1] is not None and owned[1] in scopes:
+        scopes.remove(owned[1])
+    if scopes != plan['before']['lan_scopes']:
+        raise CompatibilityError('LAN address-scope list changed outside the owned preparation scope.')
     assert_preparation_collections(stripped, plan['before'])
     return owned
 
