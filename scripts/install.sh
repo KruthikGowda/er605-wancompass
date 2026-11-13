@@ -103,6 +103,7 @@ cp "$REPO/README.md" /opt/netpulse/
 install -d -m 755 /opt/netpulse/tools
 install -m 644 "$REPO/tools/router_acl_pilot.py" "$REPO/tools/router_firewall_discover.py" /opt/netpulse/tools/
 install -m 644 "$REPO/tools/router_control_readiness.py" /opt/netpulse/tools/
+install -m 644 "$REPO/tools/router_compat_trial.py" /opt/netpulse/tools/
 find /opt/netpulse -name __pycache__ -prune -exec rm -rf {} +
 
 echo "==> Config -> $CONFIG_PATH"
@@ -124,6 +125,8 @@ PYTHONPATH=/opt/netpulse python3 -c 'from netpulse import config; config.load("/
 echo "==> systemd unit"
 install -m 644 "$REPO/systemd/netpulse.service" /etc/systemd/system/netpulse.service
 install -m 644 "$REPO/systemd/netpulse-acl-recovery.service" /etc/systemd/system/netpulse-acl-recovery.service
+install -m 644 "$REPO/systemd/netpulse-compat-recovery.service" /etc/systemd/system/netpulse-compat-recovery.service
+# Candidate recovery is installed but enabled only for an approved isolated trial.
 systemctl daemon-reload
 systemctl enable netpulse.service >/dev/null
 systemctl restart netpulse.service

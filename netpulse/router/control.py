@@ -176,7 +176,9 @@ class RouterControl:
         firmware_version = getattr(self.router.snap, "firmware_version", None)
         accepted_firmware = self._firmware_store.get("router_firmware_accepted")
         pending_firmware = self._firmware_store.get("router_firmware_pending")
-        acl_recovery_failed = self._firmware_store.get("pi_acl_recovery_failed") == "1"
+        from netpulse.router.trial_lock import trial_recovery_pending
+        acl_recovery_failed = (self._firmware_store.get("pi_acl_recovery_failed") == "1"
+                               or trial_recovery_pending())
         if firmware_version:
             if accepted_firmware is None:
                 # Establish the first observed version as the baseline. Future changes
